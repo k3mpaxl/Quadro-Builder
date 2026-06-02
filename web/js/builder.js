@@ -4,7 +4,7 @@ import { DIRECTIONS, DIAGONAL_DIRECTIONS } from "./config.js";
 import { geometry, getTube, spacingFor, getPanel, defaultPanel, diagonalTubeId } from "./catalog.js";
 import { computeBuildPlan, connectorLabelInfo } from "./buildplan.js";
 
-const CLICK_TOLERANCE = 5; // px: groessere Mausbewegung = Kamera drehen, kein Klick
+const CLICK_TOLERANCE = 9; // px: groessere Bewegung = Kamera drehen, kein Klick (Touch-tauglich)
 
 export class Builder {
   constructor(scene, model, { onChange } = {}) {
@@ -69,7 +69,9 @@ export class Builder {
   setMode(mode) {
     this.mode = mode;
     if (mode === "delete") this.selectedNodeId = null;
-    if (mode === "assembly") this.enterAssembly();
+    // Labels (Namen) gehoeren in den Bau-Modus -> beim Verlassen abschalten.
+    if (mode !== "add" && mode !== "panel") this.showLabels = false;
+    if (mode === "assembly") this.enterAssembly(); // Aufbau zeigt wieder eigene Labels
     this.refresh();
   }
   setTube(tubeId) { this.tubeId = tubeId; }

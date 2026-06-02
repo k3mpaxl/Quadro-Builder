@@ -68,7 +68,6 @@
 
     <div class="group push-right">
       <button id="btn-undo" class="btn ghost" data-i18n="btn_undo" data-i18n-title="btn_undo_title" disabled>↶ Zurück</button>
-      <button id="btn-camera" class="btn ghost" data-i18n="btn_camera" data-i18n-title="btn_camera_title">Ansicht</button>
 
       <span class="divider"></span>
 
@@ -97,11 +96,18 @@
       </div>
 
       <button id="btn-help" class="btn ghost" data-i18n="btn_help" data-i18n-title="btn_help_title">⌨ Tasten</button>
-      <button id="sidebar-toggle" class="btn ghost" data-i18n="btn_sidebar" data-i18n-title="btn_sidebar_title">⟩ Panel</button>
-      <select id="btn-lang" class="lang-select" title="Sprache / Language">
-        <option value="de">&#x1F1E9;&#x1F1EA; Deutsch</option>
-        <option value="en">&#x1F1EC;&#x1F1E7; English</option>
-      </select>
+
+      <span class="divider"></span>
+
+      <!-- Ansicht-Gruppe: Kamera, Liste/Panel, Sprache -->
+      <div class="group" id="grp-view">
+        <button id="btn-camera" class="btn ghost" data-i18n="btn_camera" data-i18n-title="btn_camera_title">Ansicht</button>
+        <button id="sidebar-toggle" class="btn ghost" data-i18n="btn_sidebar" data-i18n-title="btn_sidebar_title">⟩ Panel</button>
+        <select id="btn-lang" class="lang-select" title="Sprache / Language">
+          <option value="de">&#x1F1E9;&#x1F1EA; Deutsch</option>
+          <option value="en">&#x1F1EC;&#x1F1E7; English</option>
+        </select>
+      </div>
     </div>
   </header>
 

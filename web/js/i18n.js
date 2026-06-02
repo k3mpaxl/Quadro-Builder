@@ -105,6 +105,7 @@ const de = {
   flash_loaded: (name) => `Geladen: ${name}`,
   flash_exported: 'Entwurf exportiert.',
   flash_imported_json: 'Entwurf importiert.',
+  flash_import_draft: (name) => `neuer Entwurf „${name}"`,
   flash_inv_exported: 'Bestand exportiert.',
   flash_inv_imported: 'Bestand importiert.',
 
@@ -274,6 +275,7 @@ const en = {
   flash_loaded: (name) => `Loaded: ${name}`,
   flash_exported: 'Design exported.',
   flash_imported_json: 'Design imported.',
+  flash_import_draft: (name) => `new draft “${name}”`,
   flash_inv_exported: 'Inventory exported.',
   flash_inv_imported: 'Inventory imported.',
 

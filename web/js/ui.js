@@ -10,6 +10,12 @@ import { t, getLang, setLang, applyTranslations } from "./i18n.js";
 const INV_KEY = "quadro.inventory.v1";
 
 function $(id) { return document.getElementById(id); }
+
+// Zeitstempel "YYYY-MM-DD HH:MM" fuer eindeutige Entwurf-Namen beim Import.
+function importStamp() {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 function eur(v) { return v.toFixed(2).replace(".", ",") + " €"; }
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -240,6 +246,7 @@ export function initUI({ scene, model, builder }) {
     const f = e.target.files[0];
     if (!f) return;
     try {
+      let info = "";
       if (/\.qdf$/i.test(f.name)) {
         const text = await f.text();
         const data = parseQDF(text, {
@@ -261,14 +268,22 @@ export function initUI({ scene, model, builder }) {
         const panelTxt = s.panels ? `, ${s.panels} ${t("bom_panels").toLowerCase()}` : "";
         const clampTxt = s.clamps ? `, ${s.clamps} ${t("btn_clamp").toLowerCase()}` : "";
         const stats = `${s.nodes} ${t("bom_connectors").split(" ")[0].toLowerCase()}, ${s.tubes} ${t("bom_tubes").toLowerCase()}${panelTxt}${clampTxt}`;
-        flash(t("qdf_imported", stats, skipTxt));
+        info = t("qdf_imported", stats, skipTxt);
       } else {
         const data = await storage.importFile(f);
         builder.recordHistory(() => model.loadJSON(data));
         builder.selectedNodeId = null;
         builder.refresh();
-        flash(t("flash_imported_json"));
+        info = t("flash_imported_json");
       }
+      // Import als NEUEN Entwurf ablegen (Name = Datei + Datum/Zeit), damit alte
+      // Staende erhalten bleiben; auf diesem Entwurf wird weitergearbeitet.
+      const base = f.name.replace(/\.[^.]+$/, "").trim() || "Import";
+      const draftName = `${base} ${importStamp()}`;
+      storage.saveNamed(draftName, model.toJSON());
+      refreshSavedList();
+      $("load-select").value = draftName;
+      flash(`${info} · ${t("flash_import_draft", draftName)}`);
     } catch (err) { alert(err.message); }
     e.target.value = "";
   });

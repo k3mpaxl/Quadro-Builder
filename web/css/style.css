@@ -18,7 +18,14 @@ body {
   background: var(--bg);
   display: flex;
   flex-direction: column;
+  /* Touch/iPad: kein Gummiband-Scrollen, keine Doppeltipp-Zoom-Verzoegerung */
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
 }
+/* Bedienelemente reagieren ohne 300ms-Verzoegerung; keine Textauswahl beim Tippen */
+.btn, .swatch, .lang-select, select, label { touch-action: manipulation; }
+#toolbar, .group, .seg, .menu-pop { -webkit-user-select: none; user-select: none; }
 
 /* Toolbar */
 #toolbar {
@@ -139,8 +146,8 @@ select {
 :root { --sidebar-w: 320px; }
 main { flex: 1; display: flex; min-height: 0; }
 #canvas-wrap { position: relative; flex: 1; min-width: 0; }
-#canvas { position: absolute; inset: 0; }
-#canvas canvas { display: block; }
+#canvas { position: absolute; inset: 0; touch-action: none; }
+#canvas canvas { display: block; touch-action: none; }
 body.resizing { cursor: col-resize; user-select: none; }
 
 /* Reopen-Button, wenn Seitenleiste ausgeblendet */
