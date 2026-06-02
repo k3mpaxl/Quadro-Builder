@@ -1,0 +1,15 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# OS / Editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Node (nur fuer Tooling, nicht Teil der App)
+node_modules/
+quadro-entwurf*.json

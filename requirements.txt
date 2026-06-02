@@ -1,0 +1,5 @@
+# Der MVP braucht KEINE Pakete – serve.py nutzt nur die Python-Standardbibliothek.
+#
+# Fuer das spaetere optionale Backend (siehe README, Roadmap) hier eintragen:
+# Django>=5.0
+# djangorestframework>=3.15

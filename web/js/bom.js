@@ -1,0 +1,330 @@
+// Stueckliste (BOM) + Kupplungstyp-Heuristik + Bestands-/Machbarkeitscheck.
+
+import { getTube, getConnector, getPanel, colorName, partName, reinforcementPart } from "./catalog.js";
+
+// Einheitsvektoren der Nachbarn eines Knotens. Doppelrohr-Verbindungen (link)
+// sind KEIN Arm der Kupplung und zaehlen nicht in die Kupplungstyp-Heuristik
+// (sonst werden offene Rohrenden faelschlich als 2-armige Kupplung gezaehlt).
+// Der C45-Adapter-Arm (arm) bleibt dagegen drin -- er gehoert zur Klassifizierung
+// des Adapter-Koerpers (c45body).
+function neighborDirs(model, node) {
+  const dirs = [];
+  for (const t of model.tubes.values()) {
+    if (t.link) continue;
+    let nb = null;
+    if (t.a === node.id) nb = model.nodes.get(t.b);
+    else if (t.b === node.id) nb = model.nodes.get(t.a);
+    if (!nb) continue;
+    const dx = nb.x - node.x, dy = nb.y - node.y, dz = nb.z - node.z;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    dirs.push([dx / len, dy / len, dz / len]);
+  }
+  return dirs;
+}
+
+// Liegen alle Richtungen in einer Ebene (teilen sich eine Null-Achse)?
+function isCoplanar(dirs) {
+  for (let axis = 0; axis < 3; axis++) {
+    if (dirs.every((d) => Math.abs(d[axis]) < 0.05)) return true;
+  }
+  return false;
+}
+
+// Ist die (normierte) Richtung eine ECHTE 45-Grad-Schraege, die eine
+// Winkelkupplung (C45) braucht? Kennzeichen: zwei betragsgleiche Komponenten
+// (je ~0,707) und die dritte ~0 (also exakt 45 Grad in einer Achsenebene).
+// Flache Rampen (z. B. Doppelrohr-Rampe 19,47 Grad = Richtung 0,94/0,33/0) oder
+// steile Sparren erfuellen das NICHT und werden daher nicht als C45 gezaehlt.
+function isC45Dir(d) {
+  const a = [Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2])].sort((x, y) => y - x);
+  return a[1] > 0.5 && a[0] - a[1] < 0.2 && a[2] < 0.2;
+}
+
+// Geometrische Klassifikation rein achsenparalleler Arme nach Anzahl + Lage.
+function connectorTypeForDirs(dirs) {
+  const deg = dirs.length;
+  if (deg === 0) return null;
+  if (deg === 1) return "end";
+  const planar = isCoplanar(dirs);
+  if (deg === 2) {
+    // gegenueberliegend => gerade; sonst Winkel
+    const dot = dirs[0][0] * dirs[1][0] + dirs[0][1] * dirs[1][1] + dirs[0][2] * dirs[1][2];
+    return dot < -0.95 ? "straight" : "elbow";
+  }
+  if (deg === 3) return planar ? "t" : "3way";
+  if (deg === 4) return planar ? "cross" : "4way";
+  if (deg === 5) return "5way";
+  return "6way";
+}
+
+// Heuristik: aus Anzahl + Lage der Rohre den repraesentativen Kupplungstyp
+// ableiten (fuer Beschriftung). Eine Winkelkupplung (45 Grad) ist nur dann
+// kennzeichnend, wenn der Knoten als C45-Traeger markiert ist (node.c45, beim
+// Import an einer echten connector45_2 gesetzt bzw. vom Editor beim Schraegbau).
+// Sonst zaehlen schraege Arme als normale Arme der Basiskupplung (z. B. die
+// Gegenenden von Schraegen oder flache Rampen = T-Stueck/Winkel). Der echte C45-
+// Knoten ist die Basiskupplung selbst; das Schraegrohr dockt ~9 cm versetzt an,
+// daher reicht das Flag und kein geometrischer 45-Grad-Arm am Knoten ist noetig.
+export function inferConnectorType(model, node) {
+  const dirs = neighborDirs(model, node);
+  if (dirs.length === 0) return null;
+  if (node.c45) return "diagonal";
+  return connectorTypeForDirs(dirs);
+}
+
+// Liefert ALLE an einem Knoten verbauten Kupplungen als Liste von Typen.
+// Nur an einem C45-Knoten bilden die achsenparallelen Arme die Basiskupplung und
+// es kommt mindestens eine aufgesteckte 45-Grad-Winkelkupplung hinzu (Schraege
+// braucht also 2 Kupplungen: Basis + 45 Grad). An allen anderen Knoten zaehlen
+// alle Arme zusammen als eine normale Kupplung. Ein reines, freies Rohrende
+// ("end") liefert eine leere Liste.
+export function connectorsForNode(model, node) {
+  const dirs = neighborDirs(model, node);
+  if (dirs.length === 0) return [];
+  // Adapter-Koerper (c45body): Hier sitzt eine *normale* Kupplung, die einfach
+  // 45 Grad gedreht eingesetzt ist – KEINE Winkelkupplung (C45). Die C45-
+  // Winkelkupplung sitzt an der Eck-Kupplung (connector45_2 / c45-Knoten),
+  // nicht hier. Die Klassifizierung richtet sich nach Anzahl + Lage aller Arme
+  // (Arm-Steg zur Eck-Kupplung + Diagonalrohr(e)).
+  if (node.c45body) {
+    const t = connectorTypeForDirs(dirs);
+    return t && t !== "end" ? [t] : [];
+  }
+  if (!node.c45) {
+    const t = connectorTypeForDirs(dirs);
+    return t && t !== "end" ? [t] : [];
+  }
+  const axis = [], diag = [];
+  for (const d of dirs) (isC45Dir(d) ? diag : axis).push(d);
+  const out = [];
+  const baseType = connectorTypeForDirs(axis);
+  if (baseType && baseType !== "end") out.push(baseType);
+  // 45-Grad-Winkelkupplung sitzt auf einer Basiskupplung; fehlt eine
+  // achsenparallele Basis, traegt eine gerade Kupplung die Diagonale.
+  if (out.length === 0) out.push("straight");
+  const dcount = Math.max(diag.length, 1);
+  for (let i = 0; i < dcount; i++) out.push("diagonal");
+  return out;
+}
+
+// Fasst verstaerkte Rohre zu "Laeufen" zusammen: Rohre, die kollinear (gleiche
+// Achse) ueber einen gemeinsamen Knoten aneinanderstossen, bilden EIN
+// durchgehendes, laengeres Verstaerkungsprofil. Ueber Ecken (Richtungswechsel)
+// hinweg wird NICHT verbunden, da ein Profil gerade ist. Die 45-Grad-Kupplungen
+// brauchen etwas Platz, daher wird ueber Knoten-IDs (Topologie) statt exakter
+// Koordinaten verbunden und die Laenge aus der echten Knotendistanz summiert.
+function reinforcementRuns(model) {
+  const reinforced = [...model.tubes.values()].filter((t) => t.reinforced);
+  if (!reinforced.length) return [];
+
+  const dirOf = (t) => {
+    const a = model.nodes.get(t.a), b = model.nodes.get(t.b);
+    if (!a || !b) return null;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const L = Math.hypot(dx, dy, dz) || 1;
+    return [dx / L, dy / L, dz / L];
+  };
+  const lenOf = (t) => {
+    const a = model.nodes.get(t.a), b = model.nodes.get(t.b);
+    if (!a || !b) return 0;
+    return Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+  };
+
+  // Union-Find ueber Rohr-IDs.
+  const parent = new Map(reinforced.map((t) => [t.id, t.id]));
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const union = (a, b) => { parent.set(find(a), find(b)); };
+
+  // Verstaerkte Rohre pro Knoten sammeln.
+  const byNode = new Map();
+  for (const t of reinforced) {
+    for (const nid of [t.a, t.b]) {
+      if (!byNode.has(nid)) byNode.set(nid, []);
+      byNode.get(nid).push(t);
+    }
+  }
+  // An jedem Knoten kollineare verstaerkte Rohre zu einem Lauf verbinden.
+  for (const list of byNode.values()) {
+    for (let i = 0; i < list.length; i++) {
+      const d1 = dirOf(list[i]);
+      if (!d1) continue;
+      for (let j = i + 1; j < list.length; j++) {
+        const d2 = dirOf(list[j]);
+        if (!d2) continue;
+        const dot = d1[0] * d2[0] + d1[1] * d2[1] + d1[2] * d2[2];
+        if (Math.abs(dot) > 0.999) union(list[i].id, list[j].id); // gerade Linie
+      }
+    }
+  }
+
+  const runs = new Map(); // Wurzel -> { segments, length }
+  for (const t of reinforced) {
+    const r = find(t.id);
+    if (!runs.has(r)) runs.set(r, { segments: 0, length: 0 });
+    const run = runs.get(r);
+    run.segments++;
+    run.length += lenOf(t);
+  }
+  return [...runs.values()];
+}
+
+export function computeBOM(model) {
+  // --- Rohre nach Typ + Farbe ---
+  const tubeMap = new Map();
+  for (const t of model.tubes.values()) {
+    if (t.arm || t.link) continue; // C45-Arm / Doppelrohr-Verbindung ist kein Rohr
+    const key = t.tubeId + "|" + t.color;
+    if (!tubeMap.has(key)) tubeMap.set(key, { tubeId: t.tubeId, color: t.color, count: 0 });
+    tubeMap.get(key).count++;
+  }
+  const tubes = [...tubeMap.values()].map((r) => {
+    const def = getTube(r.tubeId) || { name: r.tubeId, price: 0, length_cm: null };
+    return {
+      key: r.tubeId + "|" + r.color,
+      tubeId: r.tubeId, color: r.color,
+      name: partName(def), colorName: colorName(r.color),
+      length: def.length_cm, count: r.count,
+      price: def.price, subtotal: round2(def.price * r.count),
+    };
+  }).sort((a, b) => (a.length || 0) - (b.length || 0));
+
+  // --- Kupplungen nach abgeleitetem Typ ---
+  // Pro Knoten koennen mehrere Kupplungen anfallen: eine Basiskupplung plus eine
+  // aufgesteckte 45-Grad-Winkelkupplung je Knoten mit schraegem Arm.
+  const connMap = new Map();
+  let openEnds = 0;
+  for (const n of model.nodes.values()) {
+    const types = connectorsForNode(model, n);
+    if (types.length === 0) {
+      if (model.degree(n.id) >= 1) openEnds++;
+      continue;
+    }
+    for (const type of types) connMap.set(type, (connMap.get(type) || 0) + 1);
+  }
+  // Doppelrohrverbinder / Klemmen sind eigenstaendige Bauteile (nicht an Knoten).
+  if (model.clamps) {
+    for (const c of model.clamps.values()) {
+      const type = c.connectorId || "double_tube";
+      connMap.set(type, (connMap.get(type) || 0) + 1);
+    }
+  }
+  const connectors = [...connMap.entries()].map(([type, count]) => {
+    const def = getConnector(type) || { name: type, code: "", price: 0 };
+    return {
+      type, code: def.code, name: partName(def), count,
+      price: def.price, subtotal: round2(def.price * count),
+    };
+  }).sort((a, b) => b.count - a.count);
+
+  // --- Platten nach Typ + Farbe ---
+  const panelMap = new Map();
+  for (const p of model.panels.values()) {
+    const key = p.panelId + "|" + p.color;
+    if (!panelMap.has(key)) panelMap.set(key, { panelId: p.panelId, color: p.color, count: 0 });
+    panelMap.get(key).count++;
+  }
+  const panels = [...panelMap.values()].map((r) => {
+    const def = getPanel(r.panelId) || { name: r.panelId, price: 0 };
+    return {
+      key: r.panelId + "|" + r.color,
+      panelId: r.panelId, color: r.color,
+      name: partName(def), colorName: colorName(r.color), count: r.count,
+      price: def.price, subtotal: round2(def.price * r.count),
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+
+  const tubeCount = tubes.reduce((s, r) => s + r.count, 0);
+  const connCount = connectors.reduce((s, r) => s + r.count, 0);
+  const panelCount = panels.reduce((s, r) => s + r.count, 0);
+
+  // --- Verstaerkungen (Profile in verstaerkten Rohren) ---
+  // Verstaerkungsprofile (heute Holz, frueher Alu) werden in die Rohre geschoben
+  // und kommen in 40-cm-Laengen. Pro 40 cm verstaerkter Lauf-Laenge ein Stueck;
+  // ein langer Lauf wird also aus mehreren 40-cm-Profilen zusammengeschoben.
+  const runs = reinforcementRuns(model);
+  const reinforcements = [];
+  const part = reinforcementPart();
+  let pieces = 0;
+  for (const run of runs) pieces += Math.max(1, Math.round(run.length / 40));
+  if (pieces && part) {
+    reinforcements.push({
+      key: part.id,
+      id: part.id,
+      len: 40,
+      name: partName(part),
+      count: pieces,
+      price: part.price,
+      subtotal: round2(part.price * pieces),
+    });
+  }
+  const reinfCount = pieces; // Anzahl benoetigter 40-cm-Profile
+
+  const price = round2(
+    tubes.reduce((s, r) => s + r.subtotal, 0) +
+    connectors.reduce((s, r) => s + r.subtotal, 0) +
+    panels.reduce((s, r) => s + r.subtotal, 0) +
+    reinforcements.reduce((s, r) => s + r.subtotal, 0)
+  );
+
+  return {
+    tubes, connectors, panels, reinforcements, openEnds,
+    totals: {
+      tubes: tubeCount, connectors: connCount, panels: panelCount,
+      reinforcements: reinfCount, price,
+    },
+  };
+}
+
+// Bestand: benoetigte Mengen je Rohrlaenge (Farbe egal) und je Kupplungstyp.
+export function neededParts(bom) {
+  const tubes = new Map();   // tubeId -> count
+  for (const r of bom.tubes) tubes.set(r.tubeId, (tubes.get(r.tubeId) || 0) + r.count);
+  const connectors = new Map(); // type -> count
+  for (const r of bom.connectors) connectors.set(r.type, r.count);
+  const panels = new Map();  // panelId -> count
+  for (const r of bom.panels || []) panels.set(r.panelId, (panels.get(r.panelId) || 0) + r.count);
+  const reinforcements = new Map(); // id -> count
+  for (const r of bom.reinforcements || []) reinforcements.set(r.id, (reinforcements.get(r.id) || 0) + r.count);
+  return { tubes, connectors, panels, reinforcements };
+}
+
+// Vergleicht Bedarf mit Bestand. inv = { tubes:{id:n}, connectors:{type:n}, panels:{id:n} }.
+export function compareInventory(bom, inv) {
+  const need = neededParts(bom);
+  const rows = [];
+  let feasible = true;
+
+  for (const [tubeId, count] of need.tubes) {
+    const def = getTube(tubeId) || { name: tubeId };
+    const owned = (inv.tubes && inv.tubes[tubeId]) || 0;
+    const ok = owned >= count;
+    if (!ok) feasible = false;
+    rows.push({ group: "tubes", key: tubeId, name: partName(def), need: count, owned, ok });
+  }
+  for (const [type, count] of need.connectors) {
+    const def = getConnector(type) || { name: type };
+    const owned = (inv.connectors && inv.connectors[type]) || 0;
+    const ok = owned >= count;
+    if (!ok) feasible = false;
+    rows.push({ group: "connectors", key: type, name: partName(def), need: count, owned, ok });
+  }
+  for (const [panelId, count] of need.panels) {
+    const def = getPanel(panelId) || { name: panelId };
+    const owned = (inv.panels && inv.panels[panelId]) || 0;
+    const ok = owned >= count;
+    if (!ok) feasible = false;
+    rows.push({ group: "panels", key: panelId, name: partName(def), need: count, owned, ok });
+  }
+  for (const [id, count] of need.reinforcements) {
+    const def = reinforcementPart() || { name: id };
+    const owned = (inv.reinforcements && inv.reinforcements[id]) || 0;
+    const ok = owned >= count;
+    if (!ok) feasible = false;
+    rows.push({ group: "reinforcements", key: id, name: partName(def), need: count, owned, ok });
+  }
+  return { rows, feasible };
+}
+
+function round2(v) {
+  return Math.round(v * 100) / 100;
+}

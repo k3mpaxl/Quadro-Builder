@@ -1,0 +1,499 @@
+// Import von QDF-Dateien (natives Format der originalen QUADRO-3D-Software).
+//
+// Eine QDF-Datei ist Text, eine Anweisung pro Zeile: `typ{ feld, {tuple}, feld... }`.
+// Relevante Zeilen:
+//   material3{id,"farbe",...}                         -> Farbtabelle
+//   connector3{mat,{q0,q1,q2,q3, x,y,z},...}          -> Kupplung (Knoten)
+//   connector45_2{mat,{q0,q1,q2,q3, x,y,z},...}       -> 45-Grad-Kupplung (Knoten)
+//   tube2{mat,{q0,q1,q2,q3, x,y,z},flag,len_mm,...}   -> Rohr (Start + Richtung + Laenge in rest[3])
+//   round-tube2{...}                                  -> wie tube2
+//   panel2{mat,{q0..q3, cx,cy,cz},flag,w_mm,_,h_mm,..}-> Platte (Mitte + Kantenmasse)
+//   alu2{mat,{q0..q3, x,y,z},flag,len_mm,...}         -> Alu-Verstaerkungsprofil (wie Rohr, 800 mm)
+//   alu-connector2{...}                               -> kurzes Alu-Profil (400 mm)
+//   clamp2{mat,{q0..q3, x,y,z},flag,...}              -> Doppelrohrverbinder/Klemme (Punkt auf einem Rohr)
+//   textil2 / roof2 / slide* / curved-slide*          -> Sonderteile (uebersprungen)
+//
+// Alu-Profile werden in Rohre geschoben und verstaerken sie. Sie liegen wie
+// Rohre entlang einer Achse (meist horizontal, auf erhoehten Ebenen). Da der
+// Alu-Ankerpunkt nicht zuverlaessig auf einer Kupplung sitzt, ordnen wir ein
+// Alu-Profil jenen importierten Rohren zu, deren Mittelpunkt auf dem Alu-Segment
+// liegt (kollinear + parallel) und setzen dort reinforced = true.
+//
+// Koordinaten in mm (y = oben), Raster 400 mm = 40 cm. Quaternion {w,x,y,z}
+// (nicht normiert) dreht die Basisachse +X. Rohr-Endpunkt = Start + Richtung * (Laenge + Kupplungsmass).
+//
+// Bewusst ohne Three.js/DOM, damit per Node testbar und Backend-tauglich.
+
+// Alle benannten Richtungen (kardinal + 45°-diagonal) fuer Arm-Erkennung.
+const S45 = Math.SQRT1_2;
+const ALL_NAMED_DIRS = [
+  { name: "+X", vec: [1, 0, 0] }, { name: "-X", vec: [-1, 0, 0] },
+  { name: "+Y", vec: [0, 1, 0] }, { name: "-Y", vec: [0, -1, 0] },
+  { name: "+Z", vec: [0, 0, 1] }, { name: "-Z", vec: [0, 0, -1] },
+  { name: "+X+Y", vec: [S45, S45, 0] }, { name: "+X-Y", vec: [S45, -S45, 0] },
+  { name: "-X+Y", vec: [-S45, S45, 0] }, { name: "-X-Y", vec: [-S45, -S45, 0] },
+  { name: "+Z+Y", vec: [0, S45, S45] }, { name: "+Z-Y", vec: [0, -S45, S45] },
+  { name: "-Z+Y", vec: [0, S45, -S45] }, { name: "-Z-Y", vec: [0, -S45, -S45] },
+  { name: "+X+Z", vec: [S45, 0, S45] }, { name: "+X-Z", vec: [S45, 0, -S45] },
+  { name: "-X+Z", vec: [-S45, 0, S45] }, { name: "-X-Z", vec: [-S45, 0, -S45] },
+];
+// Vektor auf die naechste benannte Richtung (kardinal oder 45°) runden.
+function nearestNamedDir(v) {
+  let best = ALL_NAMED_DIRS[0], bestDot = -Infinity;
+  for (const d of ALL_NAMED_DIRS) {
+    const dot = v[0] * d.vec[0] + v[1] * d.vec[1] + v[2] * d.vec[2];
+    if (dot > bestDot) { bestDot = dot; best = d; }
+  }
+  return { name: best.name, vec: best.vec };
+}
+
+// Farbnamen aus material3 auf unsere Farb-IDs abbilden.
+const COLOR_BY_NAME = {
+  red: "red", green: "green", blue: "blue", yellow: "yellow",
+};
+const FALLBACK_COLOR = "blue";
+
+// Eine QDF-Zeile in { name, tuple:number[], rest:(number|string)[] } zerlegen.
+function parseLine(line) {
+  const m = line.match(/^\s*([A-Za-z][\w-]*)\s*\{(.*)\}\s*;?\s*$/);
+  if (!m) return null;
+  const name = m[1];
+  let body = m[2];
+  let tuple = null;
+  const inner = body.match(/\{([^{}]*)\}/);
+  if (inner) {
+    tuple = inner[1].split(",").map((s) => parseFloat(s));
+    body = body.slice(0, inner.index) + "\u0000" + body.slice(inner.index + inner[0].length);
+  }
+  const rest = body.split(",").map((s) => {
+    const t = s.trim();
+    if (t === "\u0000" || t === "") return null;
+    const q = t.match(/^"(.*)"$/);
+    if (q) return q[1];
+    const num = parseFloat(t);
+    return Number.isNaN(num) ? t : num;
+  });
+  return { name, tuple, rest };
+}
+
+// Vektor v mit (nicht normiertem) Quaternion q={w,x,y,z} drehen.
+function rotateByQuat(q, v) {
+  let [w, x, y, z] = q;
+  const n = Math.hypot(w, x, y, z) || 1;
+  w /= n; x /= n; y /= n; z /= n;
+  const u = [x, y, z];
+  const t = cross(u, v).map((c) => 2 * c);
+  const c2 = cross(u, t);
+  return [v[0] + w * t[0] + c2[0], v[1] + w * t[1] + c2[1], v[2] + w * t[2] + c2[2]];
+}
+function cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+// Vektor auf die naechste Koordinatenachse (Einheits-Kardinalrichtung) runden.
+function nearestCardinal(v) {
+  const ax = Math.abs(v[0]), ay = Math.abs(v[1]), az = Math.abs(v[2]);
+  if (ax >= ay && ax >= az) return [Math.sign(v[0]) || 1, 0, 0];
+  if (ay >= az) return [0, Math.sign(v[1]) || 1, 0];
+  return [0, 0, Math.sign(v[2]) || 1];
+}
+
+// Erkennt die charakteristische, schiefe Richtung, mit der das QDF-Schema die
+// Rohre an einer 45-Grad-Winkelkupplung (C45) kodiert: |Komponenten| ~
+// {0.943, 0.333, 0} (= (2√2/3, 1/3, 0), eine Komponente ~0). Tritt in allen drei
+// Achsenebenen und als 19,5°/70,5°/0° auf -- physikalisch ist es IMMER eine um
+// 45 Grad um EINE Achse gedrehte Diagonale. Andere Schraegen (Doppelrohr-Rampen)
+// erfuellen das Muster nicht und bleiben unangetastet.
+function isMagicDiagonal(d) {
+  const a = [Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2])].sort((x, y) => y - x);
+  return Math.abs(a[0] - 0.9428) < 0.04 && Math.abs(a[1] - 0.3333) < 0.04 && a[2] < 0.04;
+}
+
+// Richtung auf saubere Einachsen-45-Grad zwingen: die zwei betragsgroessten
+// Komponenten -> ±1/√2 (Vorzeichen erhalten), die kleinste -> 0. Ergebnis liegt
+// garantiert in genau einer Achsenebene (Rotation um nur eine Achse).
+function force45(d) {
+  const ab = [Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2])];
+  const mi = ab.indexOf(Math.min(...ab));
+  const o = [0, 0, 0];
+  for (let k = 0; k < 3; k++) if (k !== mi) o[k] = Math.sign(d[k]) * Math.SQRT1_2;
+  return o;
+}
+
+// Nearest-Buildable-Tube nach Laenge (cm) bestimmen.
+function nearestTube(tubes, lengthCm) {
+  let best = tubes[0], bestD = Infinity;
+  for (const t of tubes) {
+    if (t.length_cm == null) continue;
+    const d = Math.abs(t.length_cm - lengthCm);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return best;
+}
+
+// QDF-Text parsen -> { nodes, tubes, panels } passend fuer BuildModel.loadJSON().
+// opts.tubes: [{id,length_cm}] (buildbare Rohre), opts.connectorSize: cm, opts.mergeEps: cm.
+export function parseQDF(text, opts = {}) {
+  const tubeCatalog = opts.tubes && opts.tubes.length
+    ? opts.tubes
+    : [{ id: "T35", length_cm: 35 }];
+  const conn = opts.connectorSize != null ? opts.connectorSize : 5;
+  const eps = opts.mergeEps != null ? opts.mergeEps : 2; // cm, beim Verschmelzen grosszuegig
+
+  const materials = new Map(); // id -> colorId
+  const nodes = [];            // { id, x, y, z }
+  const tubes = [];            // { id, a, b, tubeId, color, length }
+  const panels = [];           // { id, nodes:[4 ids], panelId, color }
+  const clamps = [];           // { id, x, y, z, connectorId } (clamp2 = Doppelrohrverbinder)
+  const skipped = {};
+  let seq = 1;
+
+  // Plattengroesse (w x h cm) -> panelId. Sortiert, damit Reihenfolge egal ist.
+  const panelByDims = new Map();
+  for (const pa of opts.panels || []) {
+    if (pa.w == null || pa.h == null) continue;
+    const a = Math.round(pa.w), b = Math.round(pa.h);
+    panelByDims.set(Math.min(a, b) + "x" + Math.max(a, b), pa.id);
+  }
+  function panelIdForDims(wCm, hCm) {
+    const a = Math.round(wCm), b = Math.round(hCm);
+    return panelByDims.get(Math.min(a, b) + "x" + Math.max(a, b)) || null;
+  }
+
+
+  // Knoten finden oder anlegen (verschmelzt nahe Punkte).
+  const eps2 = eps * eps;
+  function nodeAt(x, y, z, create = true) {
+    for (const nd of nodes) {
+      const dx = nd.x - x, dy = nd.y - y, dz = nd.z - z;
+      if (dx * dx + dy * dy + dz * dz <= eps2) return nd;
+    }
+    if (!create) return null;
+    const nd = { id: "n" + seq++, x, y, z };
+    nodes.push(nd);
+    return nd;
+  }
+
+  // Kupplungen sind die echten Gelenke. Rohrenden docken an die naechst-
+  // gelegene zuvor platzierte Kupplung an, sodass aufeinanderfolgende Segmente
+  // denselben Kupplungs-Knoten teilen.
+  // Winkelkupplungs-Rohre (connector45_2) haben einen physischen Arm-Versatz
+  // von ~8,67 cm zum Kupplungszentrum. Dafuer wird eine groessere Snap-
+  // Toleranz (10 cm) verwendet.
+  const connectorNodes = []; // Knoten, die aus einer Kupplung stammen
+  const SNAP_TOL = opts.snapTol != null ? opts.snapTol : 5;
+  const snapTol2 = SNAP_TOL * SNAP_TOL;
+  function snapToConnector(x, y, z, create = true) {
+    let best = null, bestD = snapTol2;
+    for (const nd of connectorNodes) {
+      const dx = nd.x - x, dy = nd.y - y, dz = nd.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 <= bestD) { bestD = d2; best = nd; }
+    }
+    if (best) return best;
+    return nodeAt(x, y, z, create);
+  }
+
+  // --- 45-Grad-Winkelkupplung (C45) -----------------------------------------
+  // Das Diagonalrohr dockt ~8,67 cm (Adapter-Arm) versetzt zur Eck-Kupplung an.
+  // diagonalEndNode legt am Rohrende den Adapter-Koerper (c45body) an und
+  // verbindet ihn per kurzer Arm-Kante mit der Eck-Kupplung. Dadurch bleibt die
+  // Diagonale exakt 45 Grad und das Bauwerk bleibt zusammenhaengend.
+  const ARM_TOL = opts.armTol != null ? opts.armTol : 11; // cm, > Arm (8,67)
+  const armTol2 = ARM_TOL * ARM_TOL;
+  function nearestC45Corner(x, y, z) {
+    let best = null, bestD = armTol2;
+    for (const nd of connectorNodes) {
+      if (!nd._c45corner) continue;
+      const dx = nd.x - x, dy = nd.y - y, dz = nd.z - z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > 0.25 && d2 <= bestD) { bestD = d2; best = nd; } // > 0,5 cm: nicht die Ecke selbst
+    }
+    return best;
+  }
+  function diagonalEndNode(x, y, z) {
+    // Sitzt an dieser Position bereits eine bekannte (importierte) Kupplung?
+    // Dann ist das eine normale, 45-Grad-gedrehte Kupplung – KEIN C45-Adapter.
+    const existing = snapToConnector(round(x), round(y), round(z), false);
+    if (existing) return existing;
+    // Liegt das Rohrende in Arm-Reichweite eines connector45_2-Eck-Knotens?
+    // Dann sitzt hier der C45-Adapter-Koerper (c45body).
+    const corner = nearestC45Corner(x, y, z);
+    if (!corner) return snapToConnector(round(x), round(y), round(z));
+    const body = nodeAt(round(x), round(y), round(z)); // Adapter-Koerper am Rohrende
+    body.c45 = true;
+    body.c45body = true;
+    if (corner._c45axis) body.c45axis = corner._c45axis; // kardinale Huelsenachse
+    if (corner.id !== body.id && !tubeExists(tubes, corner.id, body.id)) {
+      tubes.push({ id: "m" + seq++, a: corner.id, b: body.id, arm: true, color: FALLBACK_COLOR });
+    }
+    return body;
+  }
+
+  const lines = text.split(/\r?\n/);
+
+  // 1. Durchlauf: Materialien + Kupplungen (Knoten zuerst, damit Rohre andocken).
+  for (const raw of lines) {
+    const p = parseLine(raw);
+    if (!p) continue;
+    if (p.name === "material3") {
+      const id = p.rest.find((v) => typeof v === "number");
+      const colorName = p.rest.find((v) => typeof v === "string");
+      if (id != null) materials.set(id, COLOR_BY_NAME[colorName] || FALLBACK_COLOR);
+    } else if (p.name === "connector3" || p.name === "connector45_2") {
+      if (!p.tuple || p.tuple.length < 7) continue;
+      const x = p.tuple[4] / 10, y = p.tuple[5] / 10, z = p.tuple[6] / 10;
+      const nd = nodeAt(round(x), round(y), round(z));
+      if (!connectorNodes.includes(nd)) connectorNodes.push(nd);
+      // connector45_2 ist die ECK-Kupplung, an der eine 45-Grad-Winkelkupplung
+      // (C45) sitzt. Der eigentliche Adapter-Koerper samt Diagonalrohr sitzt
+      // ~8,67 cm versetzt (Adapter-Arm). Er wird in Durchlauf 2 als eigener
+      // c45body-Knoten erzeugt und per kurzer Arm-Kante hier angedockt -- so
+      // bleibt die Diagonale exakt 45 Grad UND zusammenhaengend (kein loses Ende).
+      // _c45corner ist transient (nur Import-intern, wird nicht serialisiert).
+      if (p.name === "connector45_2") {
+        nd._c45corner = true;
+        // Kardinale Huelsenachse: Richtung, in der die C45-Huelse auf einen Arm
+        // der Basiskupplung gesteckt ist (= +X-Arm des connector45-Quaternions,
+        // auf die naechste Achse gerundet). Steuert die Adapter-Darstellung.
+        nd._c45axis = nearestCardinal(rotateByQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]], [1, 0, 0]));
+      } else {
+        // connector3: Bei 45°-Drehung (Diagonalkupplung) die rotierten Arm-Richtungen
+        // speichern. Dann braucht man beim Weiterbauen KEINEN C45-Adapter.
+        const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+        const fwd = rotateByQuat(q, [1, 0, 0]);
+        const isCardinal = Math.max(Math.abs(fwd[0]), Math.abs(fwd[1]), Math.abs(fwd[2])) > 0.85;
+        if (!isCardinal) {
+          nd.armDirs = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]
+            .map(v => nearestNamedDir(rotateByQuat(q, v)));
+        }
+      }
+    } else if (p.name === "clamp2") {
+      // Doppelrohrverbinder/Klemme: sitzt als freier Punkt auf einem Rohr.
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const x = p.tuple[4] / 10, y = p.tuple[5] / 10, z = p.tuple[6] / 10;
+      clamps.push({ id: "k" + seq++, x: round(x), y: round(y), z: round(z), connectorId: "double_tube" });
+    }
+  }
+
+  // 2. Durchlauf: Rohre (Start + gedrehte +X-Achse * Spannweite).
+  for (const raw of lines) {
+    const p = parseLine(raw);
+    if (!p) continue;
+    if (p.name === "tube2" || p.name === "round-tube2") {
+      if (!p.tuple || p.tuple.length < 7) continue;
+      const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+      const sx = p.tuple[4] / 10, sy = p.tuple[5] / 10, sz = p.tuple[6] / 10;
+      const lenCm = (typeof p.rest[3] === "number" ? p.rest[3] : 350) / 10;
+      const def = nearestTube(tubeCatalog, lenCm);
+      const span = lenCm + conn;
+      const rawDir = rotateByQuat(q, [1, 0, 0]);
+      // QDF kodiert C45-Diagonalrohre mit einer charakteristischen, schiefen
+      // Richtung |Komponenten| ~ {0.943, 0.333, 0} (Schema-Altlast, NICHT die
+      // echte Geometrie). Physikalisch liegt eine solche Diagonale immer auf
+      // einem um 45 Grad um EINE Achse gedrehten Raster. Wir erkennen das Muster
+      // und zwingen die Richtung auf saubere Einachsen-45-Grad. Gerade Rohre und
+      // andere Schraegen (z.B. Doppelrohr-Rampen) bleiben unveraendert.
+      const corrected = isMagicDiagonal(rawDir);
+      const dir = corrected ? force45(rawDir) : rawDir;
+      const ex = sx + dir[0] * span, ey = sy + dir[1] * span, ez = sz + dir[2] * span;
+      // Diagonalrohre (corrected = an einer C45-Winkelkupplung) docken ueber
+      // einen Adapter-Koerper + Arm-Kante an die Eck-Kupplung an; gerade Rohre
+      // schnappen direkt auf die naechste Kupplung.
+      const a = corrected ? diagonalEndNode(sx, sy, sz) : snapToConnector(round(sx), round(sy), round(sz));
+      const b = corrected ? diagonalEndNode(ex, ey, ez) : snapToConnector(round(ex), round(ey), round(ez));
+      if (a.id === b.id) continue;
+      if (tubeExists(tubes, a.id, b.id)) continue;
+      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
+      const color = materials.get(mat) || FALLBACK_COLOR;
+      tubes.push({ id: "t" + seq++, a: a.id, b: b.id, tubeId: def.id, color, length: def.length_cm });
+    } else if (p.name === "panel2") {
+      // Platte: tuple = {q0..q3, cx,cy,cz} (Mitte, mm). rest[3]/rest[5] = Kantenmasse (mm).
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+      const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
+      const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
+      const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
+      if (!(dimW > 0) || !(dimH > 0)) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const panelId = panelIdForDims(dimW + conn, dimH + conn);
+      if (!panelId) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const h1 = (dimW + conn) / 2, h2 = (dimH + conn) / 2;
+      // Die Platte liegt in einer von drei lokalen Ebenen; je nach Orientierung
+      // spannen unterschiedliche gedrehte Basisachsen die Plattenflaeche auf.
+      // Wir probieren die drei Achsenpaare durch und nehmen das, dessen vier
+      // Ecken auf vorhandenen Kupplungen liegen.
+      const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => rotateByQuat(q, v));
+      const pairs = [[0, 1], [0, 2], [1, 2]];
+      let nodesFound = null;
+      for (const [i, j] of pairs) {
+        for (const [ha, hb] of (h1 === h2 ? [[h1, h2]] : [[h1, h2], [h2, h1]])) {
+          const e1 = axes[i], e2 = axes[j];
+          const corner = (s1, s2) => [
+            round(cx + e1[0] * ha * s1 + e2[0] * hb * s2),
+            round(cy + e1[1] * ha * s1 + e2[1] * hb * s2),
+            round(cz + e1[2] * ha * s1 + e2[2] * hb * s2),
+          ];
+          const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+          const ns = cs.map((c) => snapToConnector(c[0], c[1], c[2], false));
+          if (ns.every((n) => n)) { nodesFound = ns; break; }
+        }
+        if (nodesFound) break;
+      }
+      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
+      const color = materials.get(mat) || FALLBACK_COLOR;
+      panels.push({ id: "p" + seq++, nodes: nodesFound.map((n) => n.id), panelId, color });
+    } else if (
+      p.name === "textil2" || p.name === "roof2" ||
+      p.name === "slide-new2" || p.name === "slide-end2" || p.name === "curved-slide2"
+    ) {
+      skipped[p.name] = (skipped[p.name] || 0) + 1;
+    }
+  }
+
+  // 3. Durchlauf: Alu-Verstaerkungsprofile -> markiere getroffene Rohre.
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  let reinforced = 0;
+  for (const raw of lines) {
+    const p = parseLine(raw);
+    if (!p) continue;
+    if (p.name !== "alu2" && p.name !== "alu-connector2") continue;
+    if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+    const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+    const sx = p.tuple[4] / 10, sy = p.tuple[5] / 10, sz = p.tuple[6] / 10;
+    const lenCm = (typeof p.rest[3] === "number" ? p.rest[3] : 800) / 10;
+    let d = rotateByQuat(q, [1, 0, 0]);
+    let sx2 = sx, sy2 = sy, sz2 = sz;
+    // Diagonale Alu-Profile (magisches 19,47°-Muster) ebenso auf saubere 45°
+    // korrigieren wie die Diagonalrohre und den Start auf den naechsten
+    // (korrigierten) Knoten schnappen -- sonst trifft die Alu-Linie die auf 45°
+    // gezogenen Rohre nicht und das Profil wird faelschlich verworfen.
+    if (isMagicDiagonal(d)) {
+      d = force45(d);
+      let best = null, bestD = 12 * 12;
+      for (const nd of nodes) {
+        const ddx = nd.x - sx, ddy = nd.y - sy, ddz = nd.z - sz, d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+        if (d2 < bestD) { bestD = d2; best = nd; }
+      }
+      if (best) { sx2 = best.x; sy2 = best.y; sz2 = best.z; }
+    }
+    const dl = Math.hypot(d[0], d[1], d[2]) || 1;
+    const u = [d[0] / dl, d[1] / dl, d[2] / dl];
+    const span = lenCm + conn;
+    let hit = false;
+    for (const t of tubes) {
+      const A = nodeById.get(t.a), B = nodeById.get(t.b);
+      if (!A || !B) continue;
+      const mx = (A.x + B.x) / 2 - sx2, my = (A.y + B.y) / 2 - sy2, mz = (A.z + B.z) / 2 - sz2;
+      const proj = mx * u[0] + my * u[1] + mz * u[2];
+      if (proj < -conn || proj > span + conn) continue;
+      const px = mx - u[0] * proj, py = my - u[1] * proj, pz = mz - u[2] * proj;
+      if (Math.hypot(px, py, pz) > eps + 2) continue; // nicht auf der Alu-Linie
+      const tx = B.x - A.x, ty = B.y - A.y, tz = B.z - A.z;
+      const tl = Math.hypot(tx, ty, tz) || 1;
+      const cosang = Math.abs((tx * u[0] + ty * u[1] + tz * u[2]) / tl);
+      if (cosang < 0.9) continue; // Rohr nicht parallel zum Alu
+      if (!t.reinforced) { t.reinforced = true; reinforced++; }
+      hit = true;
+    }
+    if (!hit) skipped[p.name] = (skipped[p.name] || 0) + 1;
+  }
+
+  // --- 4. Durchlauf: Doppelrohrverbinder (clamp2) -----------------------------
+  // Eine Klemme ist eine "8": zwei Oeffnungen nebeneinander, durch jede laeuft
+  // eine Tube. Sie haelt also ZWEI parallele, ~5 cm versetzte Tubes zusammen.
+  // Wir finden dieses Paar, merken Achse + Versatz fuer die Darstellung und
+  // verbinden die beiden Tubes per Link-Kante -- sonst haengt die angeklemmte
+  // Teilstruktur (Rutsche/Rampe) lose in der Luft.
+  {
+    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    const realTubes = tubes.filter((t) => !t.arm && !t.link);
+    const closestOnSeg = (p, a, b) => {
+      const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
+      const L2 = abx * abx + aby * aby + abz * abz || 1, L = Math.sqrt(L2);
+      let t = ((p.x - a.x) * abx + (p.y - a.y) * aby + (p.z - a.z) * abz) / L2;
+      t = Math.max(0, Math.min(1, t));
+      return { x: a.x + abx * t, y: a.y + aby * t, z: a.z + abz * t, dir: [abx / L, aby / L, abz / L] };
+    };
+    for (const c of clamps) {
+      const cand = [];
+      for (const t of realTubes) {
+        const a = nodeById.get(t.a), b = nodeById.get(t.b);
+        if (!a || !b) continue;
+        const cp = closestOnSeg(c, a, b);
+        const d = Math.hypot(cp.x - c.x, cp.y - c.y, cp.z - c.z);
+        if (d < 7) cand.push({ t, cp, d });
+      }
+      cand.sort((x, y) => x.d - y.d);
+      if (!cand.length) continue;
+      const T1 = cand[0];
+      let T2 = null;
+      for (let i = 1; i < cand.length; i++) {
+        const dot = Math.abs(T1.cp.dir[0] * cand[i].cp.dir[0] + T1.cp.dir[1] * cand[i].cp.dir[1] + T1.cp.dir[2] * cand[i].cp.dir[2]);
+        const off = Math.hypot(cand[i].cp.x - T1.cp.x, cand[i].cp.y - T1.cp.y, cand[i].cp.z - T1.cp.z);
+        if (dot > 0.95 && off >= 3 && off <= 7) { T2 = cand[i]; break; }
+      }
+      c.dir = T1.cp.dir.map(round);
+      if (T2) {
+        // Klemme exakt zwischen beide Tubes setzen, Versatz merken (fuer die "8").
+        c.x = round((T1.cp.x + T2.cp.x) / 2); c.y = round((T1.cp.y + T2.cp.y) / 2); c.z = round((T1.cp.z + T2.cp.z) / 2);
+        c.off = [round(T2.cp.x - T1.cp.x), round(T2.cp.y - T1.cp.y), round(T2.cp.z - T1.cp.z)];
+        // Beide Tubes verbinden: naechstes Endknoten-Paar (kurze Link-Kante).
+        const e1 = [nodeById.get(T1.t.a), nodeById.get(T1.t.b)], e2 = [nodeById.get(T2.t.a), nodeById.get(T2.t.b)];
+        let best = null, bd = Infinity;
+        for (const p of e1) for (const q of e2) { const dd = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z); if (dd < bd) { bd = dd; best = [p, q]; } }
+        if (best && best[0].id !== best[1].id && !tubeExists(tubes, best[0].id, best[1].id)) {
+          tubes.push({ id: "l" + seq++, a: best[0].id, b: best[1].id, link: true, color: FALLBACK_COLOR });
+        }
+      }
+    }
+  }
+
+  // --- Bereinigung -----------------------------------------------------------
+  // Durch das Andocken an gemeinsame Kupplungen koennen entartete (a===b) oder
+  // doppelte Rohre entstehen. Diese entfernen.
+  for (let i = tubes.length - 1; i >= 0; i--) if (tubes[i].a === tubes[i].b) tubes.splice(i, 1);
+  {
+    const seenT = new Set();
+    for (let i = tubes.length - 1; i >= 0; i--) {
+      const t = tubes[i];
+      const k = t.a < t.b ? t.a + "|" + t.b : t.b + "|" + t.a;
+      if (seenT.has(k)) tubes.splice(i, 1); else seenT.add(k);
+    }
+  }
+
+  // Frei schwebende Verbinder-Knoten (kein Rohr, keine Platte) entfernen --
+  // diese Markierungen tragen nichts zum Modell bei und wuerden lose herumstehen.
+  {
+    const referenced = new Set();
+    for (const t of tubes) { referenced.add(t.a); referenced.add(t.b); }
+    for (const pa of panels) for (const id of pa.nodes) referenced.add(id);
+    for (let i = nodes.length - 1; i >= 0; i--) if (!referenced.has(nodes[i].id)) nodes.splice(i, 1);
+  }
+
+  return {
+    format: 1,
+    nodes: nodes.map((n) => {
+      const o = { id: n.id, x: n.x, y: n.y, z: n.z };
+      if (n.c45) o.c45 = true;
+      if (n.c45body) o.c45body = true;
+      if (n.c45axis) o.c45axis = n.c45axis;
+      if (n.armDirs) o.armDirs = n.armDirs; // rotierte Arm-Richtungen (45-gedrehte Kupplung)
+      return o;
+    }),
+    tubes,
+    panels,
+    clamps,
+    stats: {
+      nodes: nodes.length, tubes: tubes.length, panels: panels.length,
+      clamps: clamps.length, reinforced, skipped,
+    },
+  };
+}
+
+function tubeExists(tubes, a, b) {
+  return tubes.some((t) => (t.a === a && t.b === b) || (t.a === b && t.b === a));
+}
+function round(v) {
+  return Math.round(v * 100) / 100;
+}

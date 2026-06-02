@@ -1,0 +1,203 @@
+// Aufbauplan: zerlegt das Modell Lage fuer Lage in nachvollziehbare Bauschritte.
+// Bewusst ohne Three.js/DOM, damit es testbar und Backend-tauglich bleibt.
+//
+// Logik: Man baut von unten nach oben. Pro Hoehen-Ebene entsteht zuerst der
+// waagerechte Rahmen (Kupplungen + Rohre + Platten), danach die senkrechten
+// Stuetzen zur naechsten Ebene. Die Kupplungstypen werden aus dem FERTIGEN
+// Modell abgeleitet (man greift beim Bau die endgueltige Kupplung).
+
+import { inferConnectorType, connectorsForNode } from "./bom.js";
+import { getTube, getConnector, getPanel, colorName, partName } from "./catalog.js";
+import { getLang } from "./i18n.js";
+
+const Y_EPS = 0.6; // cm: Knoten innerhalb dieser Hoehe gelten als gleiche Ebene
+
+// Kurzes, gut lesbares Label fuer die 3D-Beschriftung am Knoten.
+const SHORT_LABEL_DE = {
+  end: "Ende", straight: "Gerade", elbow: "Winkel",
+  t: "T", cross: "Kreuz",
+  "3way": "3-Wege", "4way": "4-Wege", "5way": "5-Wege", "6way": "6-Wege",
+  diagonal: "45°",
+};
+const SHORT_LABEL_EN = {
+  end: "End", straight: "Straight", elbow: "Elbow",
+  t: "T", cross: "Cross",
+  "3way": "3-way", "4way": "4-way", "5way": "5-way", "6way": "6-way",
+  diagonal: "45°",
+};
+function shortLabel(type) {
+  const map = getLang() === "en" ? SHORT_LABEL_EN : SHORT_LABEL_DE;
+  return map[type] || type;
+}
+
+// Kategorien fuer die farbliche Hervorhebung der Beschriftung im Aufbaumodus.
+const FLAECHE_TYPES = new Set(["t", "cross"]);   // planare Flaechenkupplungen
+const RAUM_TYPES = new Set(["3way", "4way", "5way", "6way"]); // raeumliche Kupplungen
+
+// Beschriftungstext fuer einen Knoten: Kurzname + Katalog-Code (z. B. "3-Wege CS3").
+export function connectorLabel(model, node) {
+  const info = connectorLabelInfo(model, node);
+  return info ? info.text : null;
+}
+
+// Wie connectorLabel, liefert zusaetzlich die Kategorie ("flaeche" | "raum" | null)
+// fuer die farbliche Hervorhebung.
+export function connectorLabelInfo(model, node) {
+  const type = inferConnectorType(model, node);
+  if (!type) return null;
+  const def = getConnector(type);
+  const short = shortLabel(type);
+  const text = def && def.code ? `${short} ${def.code}` : short;
+  let category = null;
+  if (FLAECHE_TYPES.has(type)) category = "flaeche";
+  else if (RAUM_TYPES.has(type)) category = "raum";
+  return { text, type, category };
+}
+
+// Sortierte, eindeutige Hoehen-Ebenen (cm) des Modells, von unten nach oben.
+export function levelsOf(model) {
+  const ys = [...model.nodes.values()].map((n) => n.y).sort((a, b) => a - b);
+  const levels = [];
+  for (const y of ys) {
+    if (levels.length === 0 || Math.abs(y - levels[levels.length - 1]) > Y_EPS) {
+      levels.push(y);
+    }
+  }
+  return levels;
+}
+
+function levelIndex(levels, y) {
+  for (let i = 0; i < levels.length; i++) {
+    if (Math.abs(y - levels[i]) <= Y_EPS) return i;
+  }
+  return levels.length - 1;
+}
+
+function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+
+// --- Zaehl-Helfer -------------------------------------------------------
+function countConnectors(model, nodes) {
+  const map = new Map(); // type -> count
+  let openEnds = 0;
+  for (const n of nodes) {
+    const types = connectorsForNode(model, n);
+    if (types.length === 0) {
+      if (model.degree(n.id) >= 1) openEnds++;
+      continue;
+    }
+    for (const type of types) map.set(type, (map.get(type) || 0) + 1);
+  }
+  const rows = [...map.entries()].map(([type, count]) => {
+    const def = getConnector(type) || { name: type, code: "", price: 0 };
+    return { type, code: def.code, name: partName(def), count,
+             label: shortLabel(type), price: def.price || 0 };
+  }).sort((a, b) => b.count - a.count);
+  return { rows, openEnds };
+}
+
+function countTubes(tubes) {
+  const map = new Map(); // tubeId|color -> {tubeId,color,count}
+  for (const t of tubes) {
+    const key = t.tubeId + "|" + t.color;
+    if (!map.has(key)) map.set(key, { tubeId: t.tubeId, color: t.color, count: 0 });
+    map.get(key).count++;
+  }
+  return [...map.values()].map((r) => {
+    const def = getTube(r.tubeId) || { name: r.tubeId, length_cm: null, price: 0 };
+    return { tubeId: r.tubeId, color: r.color, name: partName(def),
+             colorName: colorName(r.color), length: def.length_cm,
+             count: r.count, price: def.price || 0 };
+  }).sort((a, b) => (a.length || 0) - (b.length || 0));
+}
+
+function countPanels(panels) {
+  const map = new Map(); // panelId|color -> {panelId,color,count}
+  for (const p of panels) {
+    const key = p.panelId + "|" + p.color;
+    if (!map.has(key)) map.set(key, { panelId: p.panelId, color: p.color, count: 0 });
+    map.get(key).count++;
+  }
+  return [...map.values()].map((r) => {
+    const def = getPanel(r.panelId) || { name: r.panelId, price: 0 };
+    return { panelId: r.panelId, color: r.color, name: partName(def),
+             colorName: colorName(r.color), count: r.count, price: def.price || 0 };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Erzeugt den Aufbauplan: ein Array von Schritten.
+// Jeder Schritt: { kind, title, level, y, connectors, openEnds, tubes, panels,
+//                  nodeIds, tubeIds, panelIds }
+export function computeBuildPlan(model) {
+  const levels = levelsOf(model);
+  const steps = [];
+  if (levels.length === 0) return { levels, steps };
+
+  // Knoten je Ebene
+  const nodeLevel = new Map(); // nodeId -> levelIndex
+  const nodesByLevel = levels.map(() => []);
+  for (const n of model.nodes.values()) {
+    const li = levelIndex(levels, n.y);
+    nodeLevel.set(n.id, li);
+    nodesByLevel[li].push(n);
+  }
+
+  // Rohre einordnen: waagerecht (gleiche Ebene) vs. Stuetze (Ebene -> hoeher)
+  const horizByLevel = levels.map(() => []);
+  const risersByLevel = levels.map(() => []); // von der UNTEREN Ebene aus
+  for (const t of model.tubes.values()) {
+    const a = model.nodes.get(t.a), b = model.nodes.get(t.b);
+    if (!a || !b) continue;
+    const la = nodeLevel.get(a.id), lb = nodeLevel.get(b.id);
+    if (la === lb) horizByLevel[la].push(t);
+    else risersByLevel[Math.min(la, lb)].push(t);
+  }
+
+  // Platten: dem Schritt der hoechsten beteiligten Ebene zuordnen
+  const panelsByLevel = levels.map(() => []);
+  for (const p of model.panels.values()) {
+    let maxLi = 0;
+    for (const id of p.nodes) maxLi = Math.max(maxLi, nodeLevel.get(id) ?? 0);
+    panelsByLevel[maxLi].push(p);
+  }
+
+  for (let i = 0; i < levels.length; i++) {
+    const nodes = nodesByLevel[i];
+    const horiz = horizByLevel[i];
+    const pans = panelsByLevel[i];
+
+    // Rahmen-Schritt (nur, wenn er etwas Neues bringt)
+    if (nodes.length || horiz.length || pans.length) {
+      const conn = countConnectors(model, nodes);
+      const title = i === 0
+        ? `Bodenebene – Rahmen (${round1(levels[i])} cm)`
+        : `Ebene ${i + 1} – Rahmen (${round1(levels[i])} cm)`;
+      steps.push({
+        kind: "frame", title, level: i, y: levels[i],
+        connectors: conn.rows, openEnds: conn.openEnds,
+        tubes: countTubes(horiz), panels: countPanels(pans),
+        nodeIds: nodes.map((n) => n.id),
+        tubeIds: horiz.map((t) => t.id),
+        panelIds: pans.map((p) => p.id),
+      });
+    }
+
+    // Stuetzen-Schritt zur naechsten Ebene
+    const risers = risersByLevel[i];
+    if (risers.length) {
+      steps.push({
+        kind: "risers",
+        title: `Ebene ${i + 1} → ${i + 2} – Stützen`,
+        level: i, y: levels[i],
+        connectors: [], openEnds: 0,
+        tubes: countTubes(risers), panels: [],
+        nodeIds: [],
+        tubeIds: risers.map((t) => t.id),
+        panelIds: [],
+      });
+    }
+  }
+
+  return { levels, steps };
+}

@@ -1,0 +1,110 @@
+// Laedt und kapselt den Teile-Katalog (data/parts.json).
+// Einziger Ort, der das JSON kennt -> spaeter leicht durch ein Backend ersetzbar.
+
+import { t, getLang } from "./i18n.js";
+
+let _data = null;
+
+export async function loadCatalog() {
+  if (_data) return _data;
+  const res = await fetch("../data/parts.json", { cache: "no-cache" });
+  if (!res.ok) throw new Error(t("catalog_load_error", res.status));
+  _data = await res.json();
+  return _data;
+}
+
+export function catalog() {
+  if (!_data) throw new Error(t("catalog_not_loaded"));
+  return _data;
+}
+
+export function geometry() {
+  return catalog().geometry;
+}
+
+export function tubeColors() {
+  return catalog().colors.tube;
+}
+
+export function connectorColor() {
+  return catalog().colors.connector;
+}
+
+export function buildableTubes() {
+  return catalog().tubes.filter((t) => t.buildable && t.length_cm != null);
+}
+
+export function allTubes() {
+  return catalog().tubes;
+}
+
+export function allConnectors() {
+  return catalog().connectors;
+}
+
+export function panels() {
+  return catalog().panels || [];
+}
+
+export function buildablePanels() {
+  return panels().filter((p) => p.buildable);
+}
+
+export function getPanel(id) {
+  return panels().find((p) => p.id === id) || null;
+}
+
+// Verstaerkungen (Alu-Profile), die in Rohre geschoben werden.
+export function reinforcements() {
+  return catalog().reinforcements || [];
+}
+
+// Standard-Verstaerkungsprofil (erstes definiertes).
+export function reinforcementPart() {
+  return reinforcements()[0] || null;
+}
+
+export function defaultPanel() {
+  return geometry().defaultPanel || (buildablePanels()[0] && buildablePanels()[0].id);
+}
+
+export function getTube(id) {
+  return catalog().tubes.find((t) => t.id === id) || null;
+}
+
+export function getConnector(id) {
+  return catalog().connectors.find((c) => c.id === id) || null;
+}
+
+export function colorHex(colorId) {
+  const c = tubeColors().find((x) => x.id === colorId);
+  return c ? c.hex : "#888888";
+}
+
+export function colorName(colorId) {
+  const c = tubeColors().find((x) => x.id === colorId);
+  if (!c) return colorId;
+  return (getLang() === "en" && c.name_en) ? c.name_en : c.name;
+}
+
+/** Gibt den Namen eines Teils in der aktuellen Sprache zurück. */
+export function partName(part) {
+  if (!part) return "";
+  return (getLang() === "en" && part.name_en) ? part.name_en : part.name;
+}
+
+// Knoten-Abstand (Mitte zu Mitte) fuer eine gegebene Rohrlaenge.
+export function spacingFor(lengthCm) {
+  return lengthCm + geometry().connectorSize;
+}
+
+// Raster-Schritt (40 cm beim 35er) = Basis fuer Diagonalen.
+export function gridSpacing() {
+  const t = getTube(geometry().defaultTube);
+  return spacingFor(t ? t.length_cm : 35);
+}
+
+// Rohr fuer schraege (45-Grad) Elemente, z. B. T52 ueber ein 40er-Feld.
+export function diagonalTubeId() {
+  return geometry().diagonalTube || "T52";
+}

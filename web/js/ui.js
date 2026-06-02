@@ -1,0 +1,702 @@
+// Verkabelt die Bedienoberflaeche (Toolbar, Tastatur, Stueckliste, Bestand).
+
+import { buildableTubes, buildablePanels, tubeColors, geometry, allTubes, allConnectors, panels, reinforcements } from "./catalog.js";
+import { computeBOM, compareInventory } from "./bom.js";
+import { computeBuildPlan } from "./buildplan.js";
+import { parseQDF } from "./qdfimport.js";
+import * as storage from "./storage.js";
+import { t, getLang, setLang, applyTranslations } from "./i18n.js";
+
+const INV_KEY = "quadro.inventory.v1";
+
+function $(id) { return document.getElementById(id); }
+function eur(v) { return v.toFixed(2).replace(".", ",") + " €"; }
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function neg(v) { return [-v[0], -v[1], -v[2]]; }
+
+function loadInv() {
+  let inv;
+  try { inv = JSON.parse(localStorage.getItem(INV_KEY)) || {}; }
+  catch { inv = {}; }
+  inv.tubes = inv.tubes || {};
+  inv.connectors = inv.connectors || {};
+  inv.panels = inv.panels || {};
+  inv.reinforcements = inv.reinforcements || {};
+  return inv;
+}
+function saveInv(inv) { localStorage.setItem(INV_KEY, JSON.stringify(inv)); }
+
+/** Rendert die Hilfe-Tabelle aus den Übersetzungen neu. */
+function renderHelpTable() {
+  const table = $("help-table");
+  if (!table) return;
+  table.innerHTML = "";
+  for (const [key, desc] of t("help_shortcuts")) {
+    const tr = document.createElement("tr");
+    const td1 = document.createElement("td"); td1.textContent = key;
+    const td2 = document.createElement("td"); td2.textContent = desc;
+    tr.appendChild(td1); tr.appendChild(td2);
+    table.appendChild(tr);
+  }
+}
+
+export function initUI({ scene, model, builder }) {
+  const inventory = loadInv();
+
+  // Übersetzungen initial anwenden
+  applyTranslations();
+  renderHelpTable();
+
+  // Sprach-Dropdown
+  const langBtn = $("btn-lang");
+  if (langBtn) {
+    langBtn.value = getLang();
+    langBtn.addEventListener("change", () => {
+      const next = langBtn.value;
+      setLang(next);
+      applyTranslations();
+      renderHelpTable();
+      // Dynamische UI-Texte aktualisieren
+      setMode(builder.mode);
+      update();
+    });
+  }
+
+  // --- Hinweise + Undo-Verfuegbarkeit ------------------------------------
+  builder.onNotice = (msg) => flash(msg);
+  builder.onHistoryChange = () => updateUndoButton();
+  function updateUndoButton() {
+    $("btn-undo").disabled = !builder.canUndo();
+  }
+
+  // --- Autosave-Anzeige --------------------------------------------------
+  let savedTimer = null;
+  function showSaved() {
+    const dot = $("autosave-status");
+    if (!dot) return;
+    dot.classList.add("saving");
+    dot.title = t("saving");
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => {
+      dot.classList.remove("saving");
+      dot.title = t("autosaved");
+    }, 350);
+  }
+
+  // --- Entwuerfe/Datei-Menue ---------------------------------------------
+  const fileMenu = $("file-menu");
+  function toggleFileMenu(open) {
+    const pop = $("file-pop");
+    const show = open == null ? pop.hidden : open;
+    pop.hidden = !show;
+    $("btn-file").classList.toggle("active", show);
+  }
+  $("btn-file").addEventListener("click", (e) => { e.stopPropagation(); toggleFileMenu(); });
+  document.addEventListener("click", (e) => {
+    if (fileMenu && !fileMenu.contains(e.target)) toggleFileMenu(false);
+  });
+
+  // --- Modus -------------------------------------------------------------
+  $("mode-add").addEventListener("click", () => setMode("add"));
+  $("mode-clamp").addEventListener("click", () => setMode("clamp"));
+  $("mode-delete").addEventListener("click", () => setMode("delete"));
+  $("mode-reinforce").addEventListener("click", () => setMode(builder.mode === "reinforce" ? "add" : "reinforce"));
+  $("mode-assembly").addEventListener("click", () => setMode("assembly"));
+  $("btn-labels").addEventListener("click", () => toggleLabels());
+  $("btn-hints").addEventListener("click", () => toggleHints());
+  $("btn-diagonal").addEventListener("click", () => toggleDiagonal());
+
+  function toggleLabels() {
+    builder.setShowLabels(!builder.showLabels);
+    $("btn-labels").classList.toggle("active", builder.showLabels);
+  }
+  function toggleHints() {
+    builder.setShowHints(!builder.showHints);
+    $("btn-hints").classList.toggle("active", builder.showHints);
+    if (builder.showHints) {
+      const n = builder.suggestionCount();
+      flash(n ? t("flash_hints_n", n) : t("flash_hints_0"));
+    }
+  }
+  function toggleDiagonal() {
+    if (builder.mode !== "add" && builder.mode !== "panel") setMode("add");
+    builder.setDiagonal(!builder.diagonal);
+    syncPartHighlights();
+  }
+
+  function syncPartHighlights() {
+    const inAdd = builder.mode === "add";
+    const inPanel = builder.mode === "panel";
+    tubeWrap.querySelectorAll("button").forEach((x) =>
+      x.classList.toggle("active", inAdd && x.dataset.tube === builder.tubeId));
+    panelWrap.querySelectorAll("button").forEach((x) =>
+      x.classList.toggle("active", inPanel && x.dataset.panel === builder.panelId));
+    $("btn-diagonal").classList.toggle("active", inAdd && builder.diagonal);
+  }
+
+  function setMode(m) {
+    builder.setMode(m);
+    $("mode-add").classList.toggle("active", m === "add" || m === "panel");
+    $("mode-clamp").classList.toggle("active", m === "clamp");
+    $("mode-delete").classList.toggle("active", m === "delete");
+    $("mode-reinforce").classList.toggle("active", m === "reinforce");
+    $("mode-assembly").classList.toggle("active", m === "assembly");
+    $("grp-build").hidden = m === "assembly" || m === "reinforce" || m === "clamp";
+    $("panel-bom").hidden = m === "assembly";
+    $("panel-inventory").hidden = m === "assembly";
+    $("panel-assembly").hidden = m !== "assembly";
+    $("btn-labels").classList.toggle("active", builder.showLabels);
+    syncPartHighlights();
+    const statusMap = {
+      add: "status_add",
+      panel: "status_panel",
+      reinforce: "status_reinforce",
+      clamp: "status_clamp",
+      assembly: "status_assembly",
+      delete: "status_delete",
+    };
+    $("status").textContent = t(statusMap[m] || "status_add");
+    if (m === "assembly") renderAssembly();
+  }
+
+  // --- Rohr-Buttons ------------------------------------------------------
+  const tubeWrap = $("tube-buttons");
+  const tubes = buildableTubes();
+  tubes.forEach((tube, i) => {
+    const b = el("button", "btn part");
+    b.dataset.tube = tube.id;
+    b.title = `${tube.name} – ${eur(tube.price)} (${i + 1})`;
+    const w = Math.round(8 + Math.min(tube.length_cm, 75) / 75 * 18);
+    b.innerHTML =
+      `<svg viewBox="0 0 28 16" width="28" height="16" aria-hidden="true">` +
+      `<line x1="${14 - w / 2}" y1="8" x2="${14 + w / 2}" y2="8" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg>` +
+      `<span>${tube.length_cm}</span>`;
+    if (tube.id === builder.tubeId) b.classList.add("active");
+    b.addEventListener("click", () => {
+      builder.setTube(tube.id);
+      if (builder.mode !== "add") setMode("add");
+      else syncPartHighlights();
+    });
+    tubeWrap.appendChild(b);
+  });
+
+  // --- Platten-Buttons ---------------------------------------------------
+  const panelWrap = $("panel-buttons");
+  for (const p of buildablePanels()) {
+    const b = el("button", "btn part");
+    b.dataset.panel = p.id;
+    b.title = `${p.name} – ${eur(p.price)}`;
+    b.innerHTML =
+      `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">` +
+      `<rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="currentColor" opacity="0.18" stroke="currentColor" stroke-width="1.4"/></svg>` +
+      `<span>${p.w}×${p.h}</span>`;
+    if (p.id === builder.panelId) b.classList.add("active");
+    b.addEventListener("click", () => {
+      builder.setPanel(p.id);
+      setMode("panel");
+    });
+    panelWrap.appendChild(b);
+  }
+
+  // --- Farben ------------------------------------------------------------
+  const sw = $("color-swatches");
+  for (const c of tubeColors()) {
+    const b = el("button", "swatch");
+    b.style.background = c.hex;
+    b.title = c.name;
+    b.dataset.color = c.id;
+    if (c.id === builder.color) b.classList.add("active");
+    b.addEventListener("click", () => {
+      builder.setColor(c.id);
+      sw.querySelectorAll(".swatch").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+    });
+    sw.appendChild(b);
+  }
+
+  // --- Aktionen ----------------------------------------------------------
+  $("btn-undo").addEventListener("click", () => builder.undo());
+  $("btn-camera").addEventListener("click", () => scene.resetCamera());
+  $("btn-clear").addEventListener("click", () => {
+    if (!model.isEmpty() && !confirm(t("confirm_clear"))) return;
+    builder.recordHistory(() => model.clear());
+    builder.selectedNodeId = null;
+    builder.refresh();
+    toggleFileMenu(false);
+  });
+  $("btn-export").addEventListener("click", () => {
+    storage.exportFile(model.toJSON(), "quadro-entwurf.json");
+    flash(t("flash_exported"));
+    toggleFileMenu(false);
+  });
+
+  $("btn-import").addEventListener("click", () => $("file-import").click());
+  $("file-import").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      if (/\.qdf$/i.test(f.name)) {
+        const text = await f.text();
+        const data = parseQDF(text, {
+          tubes: buildableTubes(),
+          panels: panels(),
+          connectorSize: geometry().connectorSize,
+          mergeEps: 2,
+        });
+        if (!data.nodes.length) throw new Error(t("qdf_no_parts"));
+        builder.recordHistory(() => model.loadJSON(data));
+        builder.selectedNodeId = null;
+        builder.refresh();
+        scene.resetCamera();
+        const s = data.stats;
+        const skip = Object.entries(s.skipped || {});
+        const skipTxt = skip.length
+          ? t("qdf_skipped", skip.map(([k, v]) => `${v}× ${k.replace(/2$|-new2$|-end2$/, "")}`).join(", "))
+          : "";
+        const panelTxt = s.panels ? `, ${s.panels} ${t("bom_panels").toLowerCase()}` : "";
+        const clampTxt = s.clamps ? `, ${s.clamps} ${t("btn_clamp").toLowerCase()}` : "";
+        const stats = `${s.nodes} ${t("bom_connectors").split(" ")[0].toLowerCase()}, ${s.tubes} ${t("bom_tubes").toLowerCase()}${panelTxt}${clampTxt}`;
+        flash(t("qdf_imported", stats, skipTxt));
+      } else {
+        const data = await storage.importFile(f);
+        builder.recordHistory(() => model.loadJSON(data));
+        builder.selectedNodeId = null;
+        builder.refresh();
+        flash(t("flash_imported_json"));
+      }
+    } catch (err) { alert(err.message); }
+    e.target.value = "";
+  });
+
+  $("btn-save").addEventListener("click", () => {
+    const name = prompt(t("prompt_save_name"));
+    if (!name) return;
+    storage.saveNamed(name, model.toJSON());
+    refreshSavedList();
+    $("load-select").value = name;
+    toggleFileMenu(false);
+    flash(t("flash_saved", name));
+  });
+  $("btn-load").addEventListener("click", () => {
+    const name = $("load-select").value;
+    if (!name) return;
+    const data = storage.loadNamed(name);
+    if (!data) return;
+    builder.recordHistory(() => model.loadJSON(data));
+    builder.selectedNodeId = null;
+    builder.refresh();
+    toggleFileMenu(false);
+    flash(t("flash_loaded", name));
+  });
+  $("btn-delete-save").addEventListener("click", () => {
+    const name = $("load-select").value;
+    if (!name) return;
+    if (!confirm(t("confirm_delete_save", name))) return;
+    storage.deleteNamed(name);
+    refreshSavedList();
+  });
+
+  // --- Hilfe-Overlay -----------------------------------------------------
+  $("btn-help").addEventListener("click", () => { $("help-overlay").hidden = false; });
+  $("help-close").addEventListener("click", () => { $("help-overlay").hidden = true; });
+
+  // --- Seitenleiste: ein-/ausblenden + Breite ziehen ---------------------
+  const SIDEBAR_W_KEY = "quadro.sidebarWidth.v1";
+  const SIDEBAR_HIDDEN_KEY = "quadro.sidebarHidden.v1";
+  const root = document.documentElement;
+  const savedW = parseInt(localStorage.getItem(SIDEBAR_W_KEY), 10);
+  if (savedW >= 240 && savedW <= 640) root.style.setProperty("--sidebar-w", savedW + "px");
+
+  function setSidebarHidden(hidden) {
+    document.body.classList.toggle("sidebar-hidden", hidden);
+    $("sidebar-reopen").hidden = !hidden;
+    localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? "1" : "0");
+    requestAnimationFrame(() => scene.onResize());
+  }
+  if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1") setSidebarHidden(true);
+
+  $("sidebar-toggle").addEventListener("click", () =>
+    setSidebarHidden(!document.body.classList.contains("sidebar-hidden")));
+  $("sidebar-reopen").addEventListener("click", () => setSidebarHidden(false));
+
+  (function initResizer() {
+    const res = $("sidebar-resizer");
+    if (!res) return;
+    let dragging = false;
+    const onMove = (e) => {
+      if (!dragging) return;
+      const w = Math.min(640, Math.max(240, window.innerWidth - e.clientX));
+      root.style.setProperty("--sidebar-w", w + "px");
+      scene.onResize();
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.classList.remove("resizing");
+      const w = parseInt(getComputedStyle(root).getPropertyValue("--sidebar-w"), 10);
+      if (w) localStorage.setItem(SIDEBAR_W_KEY, String(w));
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    res.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      dragging = true;
+      document.body.classList.add("resizing");
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  })();
+
+  // --- Aufbaumodus (Stepper + Drucken) -----------------------------------
+  $("asm-prev").addEventListener("click", () => builder.setAssemblyStep(builder.assemblyStep - 1));
+  $("asm-next").addEventListener("click", () => builder.setAssemblyStep(builder.assemblyStep + 1));
+  $("asm-print").addEventListener("click", () => printPlan());
+
+  function asmRow(container, name, colorId, count, badge) {
+    const row = el("div", "asm-row");
+    const label = el("span", "asm-name");
+    if (colorId) {
+      const dot = el("span", "dot"); dot.style.background = colorHex(colorId);
+      label.appendChild(dot);
+    }
+    label.appendChild(document.createTextNode(name));
+    if (badge) label.appendChild(el("span", "asm-badge", badge));
+    row.appendChild(label);
+    row.appendChild(el("span", "asm-count", `${count}×`));
+    container.appendChild(row);
+  }
+
+  function renderAssembly() {
+    const plan = builder.buildPlan;
+    const total = plan.steps.length;
+    const i = builder.assemblyStep;
+    $("asm-counter").textContent = total ? t("asm_counter", i, total) : "–";
+    $("asm-prev").disabled = i <= 0;
+    $("asm-next").disabled = i >= total - 1;
+    $("asm-progress-bar").style.width = total ? `${((i + 1) / total) * 100}%` : "0%";
+
+    const title = $("asm-title"), body = $("asm-body");
+    body.innerHTML = "";
+    const step = plan.steps[i];
+    if (!step) {
+      title.textContent = t("asm_empty_title");
+      body.appendChild(el("div", "muted", t("asm_empty_body")));
+      return;
+    }
+    title.textContent = step.title;
+    if (step.connectors.length || step.openEnds) {
+      body.appendChild(el("h4", "asm-cat", t("asm_cat_connectors")));
+      for (const c of step.connectors) asmRow(body, c.name, null, c.count, c.code);
+      if (step.openEnds) asmRow(body, t("asm_open_ends"), null, step.openEnds, "");
+    }
+    if (step.tubes.length) {
+      body.appendChild(el("h4", "asm-cat", t("asm_cat_tubes")));
+      for (const tube of step.tubes) asmRow(body, `${tube.name} · ${tube.colorName}`, tube.color, tube.count, "");
+    }
+    if (step.panels.length) {
+      body.appendChild(el("h4", "asm-cat", t("asm_cat_panels")));
+      for (const p of step.panels) asmRow(body, `${p.name} · ${p.colorName}`, p.color, p.count, "");
+    }
+  }
+
+  function printPlan() {
+    const plan = computeBuildPlan(model);
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+    let html = `<h1>${esc(t("print_title"))}</h1>`;
+    if (!plan.steps.length) {
+      html += `<p>${esc(t("print_empty"))}</p>`;
+    } else {
+      plan.steps.forEach((step, idx) => {
+        html += `<section class="p-step"><h2>${idx + 1}. ${esc(step.title)}</h2>`;
+        const parts = [];
+        for (const c of step.connectors) parts.push(`${c.count}× ${esc(c.name)}${c.code ? " (" + esc(c.code) + ")" : ""}`);
+        if (step.openEnds) parts.push(`${step.openEnds}× ${esc(t("print_open_end"))}`);
+        for (const tube of step.tubes) parts.push(`${tube.count}× ${esc(tube.name)} · ${esc(tube.colorName)}`);
+        for (const p of step.panels) parts.push(`${p.count}× ${esc(p.name)} · ${esc(p.colorName)}`);
+        html += `<ul>` + parts.map((p) => `<li>${p}</li>`).join("") + `</ul></section>`;
+      });
+    }
+    $("print-area").innerHTML = html;
+    window.print();
+  }
+
+  function refreshSavedList() {
+    const sel = $("load-select");
+    sel.innerHTML = "";
+    const names = storage.listNames();
+    if (names.length === 0) {
+      const o = el("option", null, t("saves_empty"));
+      o.value = ""; sel.appendChild(o);
+      return;
+    }
+    for (const n of names) {
+      const o = el("option", null, n); o.value = n; sel.appendChild(o);
+    }
+  }
+
+  let flashTimer = null;
+  function flash(msg) {
+    $("status").textContent = msg;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => setMode(builder.mode), 2500);
+  }
+
+  // --- Tastatur ----------------------------------------------------------
+  window.addEventListener("keydown", (e) => {
+    const tgt = e.target;
+    if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "SELECT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) return;
+
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      builder.undo();
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+
+    if (builder.mode === "assembly") {
+      if (k === "ArrowRight" || k === "ArrowUp" || k === "PageUp") {
+        e.preventDefault(); builder.setAssemblyStep(builder.assemblyStep + 1); return;
+      }
+      if (k === "ArrowLeft" || k === "ArrowDown" || k === "PageDown") {
+        e.preventDefault(); builder.setAssemblyStep(builder.assemblyStep - 1); return;
+      }
+    }
+
+    const axes = scene.getHorizontalAxes();
+    let dir = null;
+    if (k === "ArrowUp") dir = axes.forward;
+    else if (k === "ArrowDown") dir = neg(axes.forward);
+    else if (k === "ArrowRight") dir = axes.right;
+    else if (k === "ArrowLeft") dir = neg(axes.right);
+    else if (k === "PageUp" || k === "+" || k === "=") dir = [0, 1, 0];
+    else if (k === "PageDown" || k === "-" || k === "_") dir = [0, -1, 0];
+    if (dir) {
+      e.preventDefault();
+      if (builder.mode !== "add") setMode("add");
+      builder.buildStep(dir);
+      return;
+    }
+
+    if (k >= "1" && k <= "9") {
+      const idx = parseInt(k, 10) - 1;
+      if (idx < tubes.length) { builder.setTube(tubes[idx].id); syncPartHighlights(); }
+      return;
+    }
+
+    switch (k.toLowerCase()) {
+      case "b": setMode("add"); break;
+      case "p": setMode("panel"); break;
+      case "x": setMode("delete"); break;
+      case "v": setMode("reinforce"); break;
+      case "a": setMode("assembly"); break;
+      case "k": setMode("clamp"); break;
+      case "d": toggleDiagonal(); break;
+      case "n": toggleLabels(); break;
+      case "h": toggleHints(); break;
+      case "c": scene.resetCamera(); break;
+      case "escape": builder.selectedNodeId = null; builder.refresh(); break;
+      case "delete":
+      case "backspace":
+        if (builder.selectedNodeId) {
+          e.preventDefault();
+          const id = builder.selectedNodeId;
+          builder.selectedNodeId = null;
+          builder.recordHistory(() => model.removeNode(id));
+          builder.refresh();
+        }
+        break;
+    }
+  });
+
+  // --- Stueckliste + Bestand ---------------------------------------------
+  function colorHex(id) {
+    const c = tubeColors().find((x) => x.id === id);
+    return c ? c.hex : "#888";
+  }
+
+  function bomRow(container, name, colorId, count, subtotal) {
+    const row = el("div", "bom-row");
+    const label = el("span", "bom-name");
+    if (colorId) {
+      const dot = el("span", "dot"); dot.style.background = colorHex(colorId);
+      label.appendChild(dot);
+    }
+    label.appendChild(document.createTextNode(name));
+    row.appendChild(label);
+    row.appendChild(el("span", "bom-count", `${count}×`));
+    row.appendChild(el("span", "bom-sub", subtotal == null ? "" : eur(subtotal)));
+    container.appendChild(row);
+  }
+
+  function update() {
+    const bom = computeBOM(model);
+
+    const tb = $("bom-tubes"); tb.innerHTML = "";
+    if (bom.tubes.length === 0) tb.appendChild(el("div", "muted", "–"));
+    for (const r of bom.tubes) bomRow(tb, `${r.name} · ${r.colorName}`, r.color, r.count, r.subtotal);
+
+    const cb = $("bom-connectors"); cb.innerHTML = "";
+    if (bom.connectors.length === 0) cb.appendChild(el("div", "muted", "–"));
+    for (const r of bom.connectors) bomRow(cb, r.name, null, r.count, r.subtotal);
+    if (bom.openEnds > 0) {
+      const row = el("div", "bom-row muted");
+      row.appendChild(el("span", "bom-name", t("bom_open_ends")));
+      row.appendChild(el("span", "bom-count", `${bom.openEnds}×`));
+      row.appendChild(el("span", "bom-sub", ""));
+      cb.appendChild(row);
+    }
+
+    const pb = $("bom-panels"); pb.innerHTML = "";
+    if (bom.panels.length === 0) pb.appendChild(el("div", "muted", "–"));
+    for (const r of bom.panels) bomRow(pb, `${r.name} · ${r.colorName}`, r.color, r.count, r.subtotal);
+
+    const rb = $("bom-reinforcements"); rb.innerHTML = "";
+    const reinf = bom.reinforcements || [];
+    if (reinf.length === 0) rb.appendChild(el("div", "muted", "–"));
+    for (const r of reinf) bomRow(rb, r.name, null, r.count, r.subtotal);
+
+    $("sum-tubes").textContent = bom.totals.tubes;
+    $("sum-conn").textContent = bom.totals.connectors;
+    $("sum-panels").textContent = bom.totals.panels;
+    $("sum-reinf").textContent = bom.totals.reinforcements || 0;
+    $("sum-price").textContent = eur(bom.totals.price);
+
+    renderInventory(bom);
+    if (!$("inventory-editor").hidden) renderInventoryEditor();
+    if (builder.mode === "assembly") renderAssembly();
+    showSaved();
+  }
+
+  function renderInventory(bom) {
+    const body = $("inventory-body"); body.innerHTML = "";
+    const banner = $("feasibility-banner");
+    if (bom.totals.tubes === 0 && bom.totals.connectors === 0 && bom.totals.panels === 0) {
+      body.appendChild(el("div", "muted", t("inv_empty_build")));
+      banner.className = "feasibility";
+      banner.textContent = "";
+      return;
+    }
+    const cmp = compareInventory(bom, inventory);
+    for (const r of cmp.rows) {
+      const row = el("div", "inv-row" + (r.ok ? "" : " bad"));
+      row.appendChild(el("span", "inv-name", r.name));
+      row.appendChild(el("span", "inv-need", t("inv_need", r.need)));
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.min = "0"; inp.className = "inv-input";
+      inp.value = r.owned;
+      inp.addEventListener("change", () => {
+        const v = Math.max(0, parseInt(inp.value || "0", 10));
+        // r.group ist jetzt direkt der Bucket-Schlüssel (tubes/connectors/...)
+        const bucket = r.group;
+        inventory[bucket][r.key] = v;
+        saveInv(inventory);
+        update();
+      });
+      row.appendChild(inp);
+      row.appendChild(el("span", "inv-status", r.ok ? "✓" : t("inv_missing", r.need - r.owned)));
+      body.appendChild(row);
+    }
+    banner.className = "feasibility " + (cmp.feasible ? "ok" : "no");
+    banner.textContent = cmp.feasible ? t("inv_feasible") : t("inv_infeasible");
+  }
+
+  // --- Bestandseditor (vollständige Teileliste + JSON Export/Import) ------
+  function renderInventoryEditor() {
+    const box = $("inventory-editor");
+    box.innerHTML = "";
+    const groups = [
+      [t("group_tubes"), "tubes", allTubes()],
+      [t("group_connectors"), "connectors", allConnectors()],
+      [t("group_panels"), "panels", panels()],
+      [t("group_reinforcements"), "reinforcements", reinforcements()],
+    ];
+    for (const [title, bucket, items] of groups) {
+      if (!items.length) continue;
+      box.appendChild(el("h4", "inv-grp", title));
+      for (const it of items) {
+        const row = el("div", "inv-edit-row");
+        const label = it.name + (it.code ? ` (${it.code})` : "");
+        row.appendChild(el("span", "inv-name", label));
+        const inp = document.createElement("input");
+        inp.type = "number"; inp.min = "0"; inp.className = "inv-input";
+        inp.value = inventory[bucket][it.id] || 0;
+        inp.addEventListener("change", () => {
+          const v = Math.max(0, parseInt(inp.value || "0", 10) || 0);
+          if (v) inventory[bucket][it.id] = v;
+          else delete inventory[bucket][it.id];
+          inp.value = v;
+          saveInv(inventory);
+          update();
+        });
+        row.appendChild(inp);
+        box.appendChild(row);
+      }
+    }
+  }
+
+  function exportInventory() {
+    storage.exportFile(
+      { format: "quadro-inventory", version: 1,
+        tubes: inventory.tubes, connectors: inventory.connectors,
+        panels: inventory.panels, reinforcements: inventory.reinforcements },
+      "quadro-bestand.json",
+    );
+    flash(t("flash_inv_exported"));
+  }
+
+  function sanitizeInventory(data) {
+    if (!data || typeof data !== "object") throw new Error(t("inv_invalid"));
+    const out = { tubes: {}, connectors: {}, panels: {}, reinforcements: {} };
+    for (const bucket of ["tubes", "connectors", "panels", "reinforcements"]) {
+      const src = data[bucket];
+      if (src && typeof src === "object") {
+        for (const [k, raw] of Object.entries(src)) {
+          const n = Math.max(0, parseInt(raw, 10) || 0);
+          if (n) out[bucket][k] = n;
+        }
+      }
+    }
+    return out;
+  }
+
+  async function importInventory(file) {
+    try {
+      const data = await storage.importFile(file);
+      const next = sanitizeInventory(data);
+      inventory.tubes = next.tubes;
+      inventory.connectors = next.connectors;
+      inventory.panels = next.panels;
+      inventory.reinforcements = next.reinforcements;
+      saveInv(inventory);
+      renderInventoryEditor();
+      update();
+      flash(t("flash_inv_imported"));
+    } catch (err) { alert(err.message); }
+  }
+
+  $("btn-inv-toggle").addEventListener("click", () => {
+    const ed = $("inventory-editor");
+    const show = ed.hidden;
+    ed.hidden = !show;
+    $("btn-inv-toggle").classList.toggle("active", show);
+    if (show) renderInventoryEditor();
+  });
+  $("btn-inv-export").addEventListener("click", exportInventory);
+  $("btn-inv-import").addEventListener("click", () => $("inv-file-import").click());
+  $("inv-file-import").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    if (f) importInventory(f);
+    e.target.value = "";
+  });
+
+  refreshSavedList();
+  setMode("add");
+  updateUndoButton();
+  return { update };
+}
