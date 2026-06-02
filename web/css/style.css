@@ -150,15 +150,6 @@ main { flex: 1; display: flex; min-height: 0; }
 #canvas canvas { display: block; touch-action: none; }
 body.resizing { cursor: col-resize; user-select: none; }
 
-/* Reopen-Button, wenn Seitenleiste ausgeblendet */
-.sidebar-reopen {
-  position: absolute; right: 12px; top: 12px;
-  background: rgba(31, 38, 48, 0.86); color: #fff;
-  border: none; padding: 7px 11px; border-radius: 8px;
-  font-size: 13px; cursor: pointer; z-index: 5;
-}
-.sidebar-reopen:hover { background: rgba(31, 38, 48, 1); }
-
 /* Ziehgriff zwischen Canvas und Seitenleiste */
 #sidebar-resizer {
   width: 6px; flex: 0 0 6px; cursor: col-resize;

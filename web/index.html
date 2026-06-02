@@ -13,7 +13,7 @@
     }
   </script>
 </head>
-<body>
+<body class="sidebar-hidden">
   <header id="toolbar">
     <div class="brand">QUADRO <span>Builder</span></div>
     <span id="autosave-status" class="save-dot" aria-label="Speicherstatus"></span>
@@ -102,7 +102,8 @@
       <!-- Ansicht-Gruppe: Kamera, Liste/Panel, Sprache -->
       <div class="group" id="grp-view">
         <button id="btn-camera" class="btn ghost" data-i18n="btn_camera" data-i18n-title="btn_camera_title">Ansicht</button>
-        <button id="sidebar-toggle" class="btn ghost" data-i18n="btn_sidebar" data-i18n-title="btn_sidebar_title">⟩ Panel</button>
+        <button id="toggle-bom" class="btn ghost" data-i18n="btn_bom" data-i18n-title="btn_bom_title">≡ Stückliste</button>
+        <button id="toggle-inventory" class="btn ghost" data-i18n="btn_inventory" data-i18n-title="btn_inventory_title">▦ Bestand</button>
         <select id="btn-lang" class="lang-select" title="Sprache / Language">
           <option value="de">&#x1F1E9;&#x1F1EA; Deutsch</option>
           <option value="en">&#x1F1EC;&#x1F1E7; English</option>
@@ -115,7 +116,6 @@
     <div id="canvas-wrap">
       <div id="canvas"></div>
       <div id="status" class="status"></div>
-      <button id="sidebar-reopen" class="sidebar-reopen" data-i18n="sidebar_reopen" data-i18n-title="sidebar_reopen_title" hidden>⟨ Liste</button>
 
       <div id="help-overlay" class="help-overlay" hidden>
         <div class="help-card">

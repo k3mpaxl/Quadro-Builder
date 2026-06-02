@@ -90,34 +90,39 @@ function cross(a, b) {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
 
+// QDF speichert die Quaternion-Komponenten vorzeichenbehaftet QUADRIERT
+// (sign·v²·scale). Rueckwaerts: sign·√(|v|). ERST damit ergeben die Orientierungen
+// die echten Richtungen -- Diagonalen kommen direkt als sauberes 45° heraus, ohne
+// jeden Korrektur-Hack. (Erkenntnis aus dem Referenz-Viewer quadro-viewer:
+// app/lib/qdf_transform_utils.ts -> decodeQdfQuaternion.)
+function decodeQuat(q) {
+  const rev = (v) => (v < 0 ? -1 : 1) * Math.sqrt(Math.abs(v));
+  return [rev(q[0]), rev(q[1]), rev(q[2]), rev(q[3])];
+}
+
+// Ist die (normierte) Richtung eine saubere 45-Grad-Diagonale in EINER
+// Achsenebene? (zwei Komponenten ~1/√2, die dritte ~0.)
+function isDiag45(d) {
+  const a = [Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2])].sort((x, y) => y - x);
+  return Math.abs(a[0] - Math.SQRT1_2) < 0.04 && Math.abs(a[1] - Math.SQRT1_2) < 0.04 && a[2] < 0.04;
+}
+
+// renderRange-Filter (aus dem Referenz-Viewer): Der Viewer rendert NUR Rohre/
+// Platten OHNE renderRangeStart-Feld; Datensätze MIT diesem Feld sind Alternativ-
+// Pass-/Hilfsgeometrie -- meist exakte Duplikate (z.B. die 50 redundanten von 56
+// Diagonalen in C0015). Wir verwerfen sie wie der Viewer. `base` = Anzahl der
+// rest-Felder OHNE renderRange: tube2 = 6 [id,∅,mat,dim1,dim2,dim3];
+// panel2/textil2/display2 = 8 [+offset1,offset2]. rest[base] ist dann renderRangeStart.
+function hasRenderRange(rest, base) {
+  return rest.length > base && typeof rest[base] === "number";
+}
+
 // Vektor auf die naechste Koordinatenachse (Einheits-Kardinalrichtung) runden.
 function nearestCardinal(v) {
   const ax = Math.abs(v[0]), ay = Math.abs(v[1]), az = Math.abs(v[2]);
   if (ax >= ay && ax >= az) return [Math.sign(v[0]) || 1, 0, 0];
   if (ay >= az) return [0, Math.sign(v[1]) || 1, 0];
   return [0, 0, Math.sign(v[2]) || 1];
-}
-
-// Erkennt die charakteristische, schiefe Richtung, mit der das QDF-Schema die
-// Rohre an einer 45-Grad-Winkelkupplung (C45) kodiert: |Komponenten| ~
-// {0.943, 0.333, 0} (= (2√2/3, 1/3, 0), eine Komponente ~0). Tritt in allen drei
-// Achsenebenen und als 19,5°/70,5°/0° auf -- physikalisch ist es IMMER eine um
-// 45 Grad um EINE Achse gedrehte Diagonale. Andere Schraegen (Doppelrohr-Rampen)
-// erfuellen das Muster nicht und bleiben unangetastet.
-function isMagicDiagonal(d) {
-  const a = [Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2])].sort((x, y) => y - x);
-  return Math.abs(a[0] - 0.9428) < 0.04 && Math.abs(a[1] - 0.3333) < 0.04 && a[2] < 0.04;
-}
-
-// Richtung auf saubere Einachsen-45-Grad zwingen: die zwei betragsgroessten
-// Komponenten -> ±1/√2 (Vorzeichen erhalten), die kleinste -> 0. Ergebnis liegt
-// garantiert in genau einer Achsenebene (Rotation um nur eine Achse).
-function force45(d) {
-  const ab = [Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2])];
-  const mi = ab.indexOf(Math.min(...ab));
-  const o = [0, 0, 0];
-  for (let k = 0; k < 3; k++) if (k !== mi) o[k] = Math.sign(d[k]) * Math.SQRT1_2;
-  return o;
 }
 
 // Nearest-Buildable-Tube nach Laenge (cm) bestimmen.
@@ -256,11 +261,11 @@ export function parseQDF(text, opts = {}) {
         // Kardinale Huelsenachse: Richtung, in der die C45-Huelse auf einen Arm
         // der Basiskupplung gesteckt ist (= +X-Arm des connector45-Quaternions,
         // auf die naechste Achse gerundet). Steuert die Adapter-Darstellung.
-        nd._c45axis = nearestCardinal(rotateByQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]], [1, 0, 0]));
+        nd._c45axis = nearestCardinal(rotateByQuat(decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]), [1, 0, 0]));
       } else {
         // connector3: Bei 45°-Drehung (Diagonalkupplung) die rotierten Arm-Richtungen
         // speichern. Dann braucht man beim Weiterbauen KEINEN C45-Adapter.
-        const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+        const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
         const fwd = rotateByQuat(q, [1, 0, 0]);
         const isCardinal = Math.max(Math.abs(fwd[0]), Math.abs(fwd[1]), Math.abs(fwd[2])) > 0.85;
         if (!isCardinal) {
@@ -282,26 +287,22 @@ export function parseQDF(text, opts = {}) {
     if (!p) continue;
     if (p.name === "tube2" || p.name === "round-tube2") {
       if (!p.tuple || p.tuple.length < 7) continue;
-      const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+      if (hasRenderRange(p.rest, 6)) continue; // Alternativ-Pass-Duplikat (wie Viewer)
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
       const sx = p.tuple[4] / 10, sy = p.tuple[5] / 10, sz = p.tuple[6] / 10;
       const lenCm = (typeof p.rest[3] === "number" ? p.rest[3] : 350) / 10;
       const def = nearestTube(tubeCatalog, lenCm);
       const span = lenCm + conn;
-      const rawDir = rotateByQuat(q, [1, 0, 0]);
-      // QDF kodiert C45-Diagonalrohre mit einer charakteristischen, schiefen
-      // Richtung |Komponenten| ~ {0.943, 0.333, 0} (Schema-Altlast, NICHT die
-      // echte Geometrie). Physikalisch liegt eine solche Diagonale immer auf
-      // einem um 45 Grad um EINE Achse gedrehten Raster. Wir erkennen das Muster
-      // und zwingen die Richtung auf saubere Einachsen-45-Grad. Gerade Rohre und
-      // andere Schraegen (z.B. Doppelrohr-Rampen) bleiben unveraendert.
-      const corrected = isMagicDiagonal(rawDir);
-      const dir = corrected ? force45(rawDir) : rawDir;
+      // Dank √-Dekodierung ist dir die ECHTE Richtung: kardinal, sauberes 45°
+      // (C45-Diagonale) oder ein echter Rampen-Winkel (z.B. 30°/60°, Doppelrohr).
+      const dir = rotateByQuat(q, [1, 0, 0]);
+      const is45 = isDiag45(dir);
       const ex = sx + dir[0] * span, ey = sy + dir[1] * span, ez = sz + dir[2] * span;
-      // Diagonalrohre (corrected = an einer C45-Winkelkupplung) docken ueber
-      // einen Adapter-Koerper + Arm-Kante an die Eck-Kupplung an; gerade Rohre
-      // schnappen direkt auf die naechste Kupplung.
-      const a = corrected ? diagonalEndNode(sx, sy, sz) : snapToConnector(round(sx), round(sy), round(sz));
-      const b = corrected ? diagonalEndNode(ex, ey, ez) : snapToConnector(round(ex), round(ey), round(ez));
+      // 45°-Diagonalrohre docken ueber einen Adapter-Koerper + Arm-Kante an die
+      // C45-Eck-Kupplung an; gerade Rohre und echte Rampen schnappen direkt auf
+      // die naechste Kupplung.
+      const a = is45 ? diagonalEndNode(sx, sy, sz) : snapToConnector(round(sx), round(sy), round(sz));
+      const b = is45 ? diagonalEndNode(ex, ey, ez) : snapToConnector(round(ex), round(ey), round(ez));
       if (a.id === b.id) continue;
       if (tubeExists(tubes, a.id, b.id)) continue;
       const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
@@ -310,7 +311,8 @@ export function parseQDF(text, opts = {}) {
     } else if (p.name === "panel2") {
       // Platte: tuple = {q0..q3, cx,cy,cz} (Mitte, mm). rest[3]/rest[5] = Kantenmasse (mm).
       if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+      if (hasRenderRange(p.rest, 8)) continue; // Alternativ-Pass-Duplikat (wie Viewer)
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
       const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
       const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
       const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
@@ -359,24 +361,13 @@ export function parseQDF(text, opts = {}) {
     if (!p) continue;
     if (p.name !== "alu2" && p.name !== "alu-connector2") continue;
     if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-    const q = [p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]];
+    const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
     const sx = p.tuple[4] / 10, sy = p.tuple[5] / 10, sz = p.tuple[6] / 10;
     const lenCm = (typeof p.rest[3] === "number" ? p.rest[3] : 800) / 10;
-    let d = rotateByQuat(q, [1, 0, 0]);
-    let sx2 = sx, sy2 = sy, sz2 = sz;
-    // Diagonale Alu-Profile (magisches 19,47°-Muster) ebenso auf saubere 45°
-    // korrigieren wie die Diagonalrohre und den Start auf den naechsten
-    // (korrigierten) Knoten schnappen -- sonst trifft die Alu-Linie die auf 45°
-    // gezogenen Rohre nicht und das Profil wird faelschlich verworfen.
-    if (isMagicDiagonal(d)) {
-      d = force45(d);
-      let best = null, bestD = 12 * 12;
-      for (const nd of nodes) {
-        const ddx = nd.x - sx, ddy = nd.y - sy, ddz = nd.z - sz, d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-        if (d2 < bestD) { bestD = d2; best = nd; }
-      }
-      if (best) { sx2 = best.x; sy2 = best.y; sz2 = best.z; }
-    }
+    // Dank √-Dekodierung hat das Alu-Profil dieselbe echte Richtung wie das Rohr,
+    // das es verstaerkt (Diagonalen sauber 45°) -- es trifft die Rohre direkt.
+    const sx2 = sx, sy2 = sy, sz2 = sz;
+    const d = rotateByQuat(q, [1, 0, 0]);
     const dl = Math.hypot(d[0], d[1], d[2]) || 1;
     const u = [d[0] / dl, d[1] / dl, d[2] / dl];
     const span = lenCm + conn;

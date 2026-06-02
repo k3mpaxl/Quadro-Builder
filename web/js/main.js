@@ -32,6 +32,26 @@ async function boot() {
     autosave(model.toJSON());
   };
   builder.refresh();
+
+  // Dev-Hook (nur mit ?dev im URL): erlaubt programmatischen QDF-Import fuer Tests.
+  if (location.search.includes("dev")) {
+    const { parseQDF } = await import("./qdfimport.js");
+    const { buildableTubes, panels, geometry } = await import("./catalog.js");
+    window.__qdf = {
+      model, builder, scene,
+      import(text) {
+        const data = parseQDF(text, {
+          tubes: buildableTubes(), panels: panels(),
+          connectorSize: geometry().connectorSize, mergeEps: 2,
+        });
+        model.loadJSON(data);
+        builder.selectedNodeId = null;
+        builder.refresh();
+        scene.resetCamera();
+        return data.stats;
+      },
+    };
+  }
 }
 
 boot();

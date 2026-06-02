@@ -153,9 +153,11 @@ export function initUI({ scene, model, builder }) {
     $("mode-reinforce").classList.toggle("active", m === "reinforce");
     $("mode-assembly").classList.toggle("active", m === "assembly");
     $("grp-build").hidden = m === "assembly" || m === "reinforce" || m === "clamp";
-    $("panel-bom").hidden = m === "assembly";
-    $("panel-inventory").hidden = m === "assembly";
-    $("panel-assembly").hidden = m !== "assembly";
+    // Aufbau-Modus zeigt das Aufbau-Panel; beim Verlassen zurück zum zuletzt
+    // gewählten Panel (oder zu). Andere Modi lassen das Panel unberührt.
+    if (m === "assembly") showSidebarPanel("assembly");
+    else if (currentPanel === "assembly")
+      showSidebarPanel(localStorage.getItem(SIDEBAR_PANEL_KEY) || null);
     $("btn-labels").classList.toggle("active", builder.showLabels);
     syncPartHighlights();
     const statusMap = {
@@ -320,24 +322,43 @@ export function initUI({ scene, model, builder }) {
   $("btn-help").addEventListener("click", () => { $("help-overlay").hidden = false; });
   $("help-close").addEventListener("click", () => { $("help-overlay").hidden = true; });
 
-  // --- Seitenleiste: ein-/ausblenden + Breite ziehen ---------------------
+  // --- Seitenleiste: EIN Panel auf Abruf (Stückliste / Bestand) ----------
+  // Die Leiste ist standardmäßig zu (body.sidebar-hidden im HTML). Die
+  // Menüband-Buttons "Stückliste" und "Bestand" öffnen je genau ihr Panel;
+  // erneuter Klick schließt wieder. Der Aufbau-Modus zeigt das Aufbau-Panel.
   const SIDEBAR_W_KEY = "quadro.sidebarWidth.v1";
-  const SIDEBAR_HIDDEN_KEY = "quadro.sidebarHidden.v1";
+  const SIDEBAR_PANEL_KEY = "quadro.sidebarPanel.v1"; // '', 'bom', 'inventory'
   const root = document.documentElement;
   const savedW = parseInt(localStorage.getItem(SIDEBAR_W_KEY), 10);
   if (savedW >= 240 && savedW <= 640) root.style.setProperty("--sidebar-w", savedW + "px");
 
-  function setSidebarHidden(hidden) {
-    document.body.classList.toggle("sidebar-hidden", hidden);
-    $("sidebar-reopen").hidden = !hidden;
-    localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? "1" : "0");
+  let currentPanel = null; // 'bom' | 'inventory' | 'assembly' | null
+
+  function applyPanelVisibility() {
+    $("panel-bom").hidden = currentPanel !== "bom";
+    $("panel-inventory").hidden = currentPanel !== "inventory";
+    $("panel-assembly").hidden = currentPanel !== "assembly";
+    document.body.classList.toggle("sidebar-hidden", currentPanel === null);
+    $("toggle-bom").classList.toggle("active", currentPanel === "bom");
+    $("toggle-inventory").classList.toggle("active", currentPanel === "inventory");
     requestAnimationFrame(() => scene.onResize());
   }
-  if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === "1") setSidebarHidden(true);
+  // name: 'bom' | 'inventory' | 'assembly' | null. Nur bom/inventory/zu wird gemerkt.
+  function showSidebarPanel(name) {
+    currentPanel = name;
+    if (name === "bom" || name === "inventory" || name === null)
+      localStorage.setItem(SIDEBAR_PANEL_KEY, name || "");
+    applyPanelVisibility();
+  }
+  function toggleSidebarPanel(name) {
+    showSidebarPanel(currentPanel === name ? null : name);
+  }
 
-  $("sidebar-toggle").addEventListener("click", () =>
-    setSidebarHidden(!document.body.classList.contains("sidebar-hidden")));
-  $("sidebar-reopen").addEventListener("click", () => setSidebarHidden(false));
+  $("toggle-bom").addEventListener("click", () => toggleSidebarPanel("bom"));
+  $("toggle-inventory").addEventListener("click", () => toggleSidebarPanel("inventory"));
+
+  // Startzustand: zuletzt gewähltes Panel (Standard: zu)
+  showSidebarPanel(localStorage.getItem(SIDEBAR_PANEL_KEY) || null);
 
   (function initResizer() {
     const res = $("sidebar-resizer");

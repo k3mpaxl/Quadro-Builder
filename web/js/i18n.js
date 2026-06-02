@@ -30,8 +30,10 @@ const de = {
   btn_file_title: 'Entwürfe & Dateien',
   btn_help: '⌨ Tasten',
   btn_help_title: 'Tastenkürzel',
-  btn_sidebar: '⟩ Panel',
-  btn_sidebar_title: 'Seitenleiste ein-/ausblenden',
+  btn_bom: '≡ Stückliste',
+  btn_bom_title: 'Stückliste ein-/ausblenden',
+  btn_inventory: '▦ Bestand',
+  btn_inventory_title: 'Bestand & Machbarkeit ein-/ausblenden',
 
   // Dateimenü
   menu_named: 'Benannter Entwurf',
@@ -151,10 +153,6 @@ const de = {
   saving: 'Speichern…',
   autosaved: 'Automatisch gespeichert',
 
-  // Seitenleisten-Wiederöffnen
-  sidebar_reopen: '⟨ Liste',
-  sidebar_reopen_title: 'Seitenleiste einblenden',
-
   // Teile-Katalog / Fehler
   catalog_load_error: (status) => `Teile-Katalog konnte nicht geladen werden (${status})`,
   catalog_not_loaded: 'Katalog noch nicht geladen',
@@ -200,8 +198,10 @@ const en = {
   btn_file_title: 'Designs & files',
   btn_help: '⌨ Keys',
   btn_help_title: 'Keyboard shortcuts',
-  btn_sidebar: '⟩ Panel',
-  btn_sidebar_title: 'Toggle sidebar',
+  btn_bom: '≡ Parts list',
+  btn_bom_title: 'Toggle parts list',
+  btn_inventory: '▦ Inventory',
+  btn_inventory_title: 'Toggle inventory & feasibility',
 
   // File menu
   menu_named: 'Named design',
@@ -320,10 +320,6 @@ const en = {
   // Autosave
   saving: 'Saving…',
   autosaved: 'Automatically saved',
-
-  // Sidebar reopen
-  sidebar_reopen: '⟨ List',
-  sidebar_reopen_title: 'Show sidebar',
 
   // Catalogue / errors
   catalog_load_error: (status) => `Could not load parts catalogue (${status})`,
