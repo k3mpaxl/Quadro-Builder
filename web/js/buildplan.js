@@ -162,13 +162,27 @@ export function computeBuildPlan(model) {
     panelsByLevel[maxLi].push(p);
   }
 
+  // Netze/Stoffe wie Platten (hoechste beteiligte Ebene); Rutschen/Daecher nach Hoehe.
+  const textilesByLevel = levels.map(() => []);
+  for (const tx of (model.textiles ? model.textiles.values() : [])) {
+    let maxLi = 0;
+    for (const id of tx.nodes) maxLi = Math.max(maxLi, nodeLevel.get(id) ?? 0);
+    textilesByLevel[maxLi].push(tx);
+  }
+  const slidesByLevel = levels.map(() => []);
+  for (const sl of (model.slides ? model.slides.values() : [])) {
+    slidesByLevel[levelIndex(levels, sl.y)].push(sl);
+  }
+
   for (let i = 0; i < levels.length; i++) {
     const nodes = nodesByLevel[i];
     const horiz = horizByLevel[i];
     const pans = panelsByLevel[i];
+    const txs = textilesByLevel[i];
+    const sls = slidesByLevel[i];
 
     // Rahmen-Schritt (nur, wenn er etwas Neues bringt)
-    if (nodes.length || horiz.length || pans.length) {
+    if (nodes.length || horiz.length || pans.length || txs.length || sls.length) {
       const conn = countConnectors(model, nodes);
       const title = i === 0
         ? `Bodenebene – Rahmen (${round1(levels[i])} cm)`
@@ -180,6 +194,8 @@ export function computeBuildPlan(model) {
         nodeIds: nodes.map((n) => n.id),
         tubeIds: horiz.map((t) => t.id),
         panelIds: pans.map((p) => p.id),
+        textileIds: txs.map((tx) => tx.id),
+        slideIds: sls.map((sl) => sl.id),
       });
     }
 
@@ -195,6 +211,8 @@ export function computeBuildPlan(model) {
         nodeIds: [],
         tubeIds: risers.map((t) => t.id),
         panelIds: [],
+        textileIds: [],
+        slideIds: [],
       });
     }
   }

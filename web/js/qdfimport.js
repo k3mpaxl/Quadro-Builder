@@ -117,6 +117,22 @@ function hasRenderRange(rest, base) {
   return rest.length > base && typeof rest[base] === "number";
 }
 
+// Lokale Arm-Achsen je variant2-Bit einer connector3 (Bitmaske der vorhandenen Arme).
+const CONNECTOR_ARM_BITS = [
+  [0x01, [1, 0, 0]], [0x02, [-1, 0, 0]],
+  [0x04, [0, 1, 0]], [0x08, [0, -1, 0]],
+  [0x10, [0, 0, 1]], [0x20, [0, 0, -1]],
+];
+// Vereinigt zwei Listen von Richtungsvektoren (dedup nach ~Gleichheit).
+function unionDirs(a, b) {
+  const out = a.slice();
+  for (const d of b) {
+    if (!out.some((e) => Math.abs(e[0] - d[0]) < 0.05 && Math.abs(e[1] - d[1]) < 0.05 && Math.abs(e[2] - d[2]) < 0.05))
+      out.push(d);
+  }
+  return out;
+}
+
 // Vektor auf die naechste Koordinatenachse (Einheits-Kardinalrichtung) runden.
 function nearestCardinal(v) {
   const ax = Math.abs(v[0]), ay = Math.abs(v[1]), az = Math.abs(v[2]);
@@ -150,6 +166,8 @@ export function parseQDF(text, opts = {}) {
   const tubes = [];            // { id, a, b, tubeId, color, length }
   const panels = [];           // { id, nodes:[4 ids], panelId, color }
   const clamps = [];           // { id, x, y, z, connectorId } (clamp2 = Doppelrohrverbinder)
+  const textiles = [];         // { id, nodes:[4 ids], w, h, color } (textil2 = Netz/Stoff)
+  const slides = [];           // { id, x, y, z, dir, kind } (slide*/roof2, dekorativ)
   const skipped = {};
   let seq = 1;
 
@@ -266,11 +284,36 @@ export function parseQDF(text, opts = {}) {
         // connector3: Bei 45°-Drehung (Diagonalkupplung) die rotierten Arm-Richtungen
         // speichern. Dann braucht man beim Weiterbauen KEINEN C45-Adapter.
         const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+        // Wuerfel-Orientierung der Kupplung (Three-Order x,y,z,w). So sitzt der
+        // Kupplungs-Wuerfel wie das echte Teil -- die Arme kommen aus den Flaechen,
+        // auch bei Rampenwinkeln (30°/60°). Erste gewinnt bei Merge.
+        if (!nd.quat) {
+          const cq = (n) => Math.round(n * 1e4) / 1e4;
+          nd.quat = [cq(q[1]), cq(q[2]), cq(q[3]), cq(q[0])];
+        }
         const fwd = rotateByQuat(q, [1, 0, 0]);
         const isCardinal = Math.max(Math.abs(fwd[0]), Math.abs(fwd[1]), Math.abs(fwd[2])) > 0.85;
         if (!isCardinal) {
           nd.armDirs = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]
             .map(v => nearestNamedDir(rotateByQuat(q, v)));
+        }
+        // variant2 (rest[4]) = Bitmaske der PHYSISCH vorhandenen Arme der Kupplung
+        // (lokale Achsen: 0x01=+X,0x02=-X,0x04=+Y,0x08=-Y,0x10=+Z,0x20=-Z). In Welt-
+        // koordinaten gedreht ergeben sie die echten Stutzen -- inkl. OFFENER Arme
+        // (ohne Rohr). So sieht die Kupplung aus wie das echte Teil (Wuerfel + Arme).
+        // Quelle: quadro-viewer connector_renderer.ts (getTubeDirections, variant2).
+        const mask = typeof p.rest[4] === "number" ? p.rest[4] : 0;
+        if (mask) {
+          // ECHTE Arm-Richtung aus der Quaternion -- NICHT auf eine benannte
+          // Richtung (kardinal/45°) snappen. Sonst wuerde ein realer Rampenwinkel
+          // (z.B. 30°/60° = [0,0.866,0.5]) faelschlich auf 45° gezwungen. Genau wie
+          // bei den Rohren wird die rohe, gedrehte Richtung verwendet.
+          const ar4 = (n) => Math.round(n * 1e4) / 1e4;
+          const armWorld = CONNECTOR_ARM_BITS
+            .filter(([b]) => mask & b)
+            .map(([, v]) => rotateByQuat(q, v).map(ar4));
+          // Bei verschmolzenen Kupplungen (dichtes Gitter) Arme vereinigen statt ueberschreiben.
+          nd.arms = nd.arms ? unionDirs(nd.arms, armWorld) : armWorld;
         }
       }
     } else if (p.name === "clamp2") {
@@ -345,11 +388,61 @@ export function parseQDF(text, opts = {}) {
       const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
       const color = materials.get(mat) || FALLBACK_COLOR;
       panels.push({ id: "p" + seq++, nodes: nodesFound.map((n) => n.id), panelId, color });
+    } else if (p.name === "textil2") {
+      // Netz/Stoff: gleiche Struktur wie panel2 (Zentrum + Maße + Quat). Wir
+      // finden die 4 Eck-Kupplungen wie bei einer Platte und haengen das Netz
+      // daran auf. Maße sind 35x75/75x75 cm -> Gitter 40x80 (nicht im Platten-
+      // Katalog, daher eigene Textil-Sammlung statt panelId).
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      if (hasRenderRange(p.rest, 8)) continue;
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+      const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
+      const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
+      const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
+      if (!(dimW > 0) || !(dimH > 0)) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const wGrid = dimW + conn, hGrid = dimH + conn; // Gitter-Spannweite (z.B. 40 x 80)
+      const h1 = wGrid / 2, h2 = hGrid / 2;
+      const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => rotateByQuat(q, v));
+      const pairs = [[0, 1], [0, 2], [1, 2]];
+      let nodesFound = null;
+      for (const [i, j] of pairs) {
+        for (const [ha, hb] of (h1 === h2 ? [[h1, h2]] : [[h1, h2], [h2, h1]])) {
+          const e1 = axes[i], e2 = axes[j];
+          const corner = (s1, s2) => [
+            round(cx + e1[0] * ha * s1 + e2[0] * hb * s2),
+            round(cy + e1[1] * ha * s1 + e2[1] * hb * s2),
+            round(cz + e1[2] * ha * s1 + e2[2] * hb * s2),
+          ];
+          const corners = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+          const ns = corners.map((c) => snapToConnector(c[0], c[1], c[2], false));
+          if (ns.every((n) => n)) { nodesFound = ns; break; }
+        }
+        if (nodesFound) break;
+      }
+      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
+      const color = materials.get(mat) || FALLBACK_COLOR;
+      textiles.push({
+        id: "x" + seq++, nodes: nodesFound.map((n) => n.id),
+        w: Math.round(Math.min(wGrid, hGrid)), h: Math.round(Math.max(wGrid, hGrid)), color,
+      });
     } else if (
-      p.name === "textil2" || p.name === "roof2" ||
-      p.name === "slide-new2" || p.name === "slide-end2" || p.name === "curved-slide2"
+      p.name === "slide2" || p.name === "slide-new2" || p.name === "slide-end2" ||
+      p.name === "curved-slide2" || p.name === "roof2"
     ) {
-      skipped[p.name] = (skipped[p.name] || 0) + 1;
+      // Rutsche/Dach: KEINE Maße im QDF, rein dekorativ. Wir merken Position +
+      // volle (√-dekodierte) Quaternion. Damit baut scene.js die Slide-Geometrie
+      // exakt wie der Referenz-Viewer (slide_renderer.ts) -- inkl. der dortigen
+      // lokalen Versaetze + 45°/90°-Drehung. q ist [w,x,y,z]; Three nutzt [x,y,z,w].
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+      const r4 = (v) => Math.round(v * 1e4) / 1e4;
+      slides.push({
+        id: "s" + seq++,
+        x: round(p.tuple[4] / 10), y: round(p.tuple[5] / 10), z: round(p.tuple[6] / 10),
+        quat: [r4(q[1]), r4(q[2]), r4(q[3]), r4(q[0])], // Three-Reihenfolge x,y,z,w (vor Rz90)
+        kind: p.name,
+      });
     }
   }
 
@@ -470,14 +563,19 @@ export function parseQDF(text, opts = {}) {
       if (n.c45body) o.c45body = true;
       if (n.c45axis) o.c45axis = n.c45axis;
       if (n.armDirs) o.armDirs = n.armDirs; // rotierte Arm-Richtungen (45-gedrehte Kupplung)
+      if (n.arms) o.arms = n.arms; // variant2: echte Arm-Stutzen (inkl. offener Arme)
+      if (n.quat) o.quat = n.quat; // Wuerfel-Orientierung der Kupplung (Three x,y,z,w)
       return o;
     }),
     tubes,
     panels,
     clamps,
+    textiles,
+    slides,
     stats: {
       nodes: nodes.length, tubes: tubes.length, panels: panels.length,
-      clamps: clamps.length, reinforced, skipped,
+      clamps: clamps.length, textiles: textiles.length, slides: slides.length,
+      reinforced, skipped,
     },
   };
 }

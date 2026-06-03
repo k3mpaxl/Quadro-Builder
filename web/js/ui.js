@@ -570,6 +570,15 @@ export function initUI({ scene, model, builder }) {
     container.appendChild(row);
   }
 
+  // Rutschen/Dach-Art -> i18n-Name.
+  function slideName(kind) {
+    const map = {
+      "slide2": "slide_slide", "slide-new2": "slide_slide", "slide-end2": "slide_end",
+      "curved-slide2": "slide_curved", "roof2": "slide_roof",
+    };
+    return t(map[kind] || "slide_slide");
+  }
+
   function update() {
     const bom = computeBOM(model);
 
@@ -591,6 +600,16 @@ export function initUI({ scene, model, builder }) {
     const pb = $("bom-panels"); pb.innerHTML = "";
     if (bom.panels.length === 0) pb.appendChild(el("div", "muted", "–"));
     for (const r of bom.panels) bomRow(pb, `${r.name} · ${r.colorName}`, r.color, r.count, r.subtotal);
+
+    const xb = $("bom-textiles"); xb.innerHTML = "";
+    const textiles = bom.textiles || [];
+    if (textiles.length === 0) xb.appendChild(el("div", "muted", "–"));
+    for (const r of textiles) bomRow(xb, `${t("bom_textile")} ${r.w}×${r.h} cm · ${r.colorName}`, r.color, r.count, null);
+
+    const slb = $("bom-slides"); slb.innerHTML = "";
+    const slides = bom.slides || [];
+    if (slides.length === 0) slb.appendChild(el("div", "muted", "–"));
+    for (const r of slides) bomRow(slb, slideName(r.kind), null, r.count, null);
 
     const rb = $("bom-reinforcements"); rb.innerHTML = "";
     const reinf = bom.reinforcements || [];

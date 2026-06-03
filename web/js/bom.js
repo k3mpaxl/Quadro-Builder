@@ -237,6 +237,28 @@ export function computeBOM(model) {
   const connCount = connectors.reduce((s, r) => s + r.count, 0);
   const panelCount = panels.reduce((s, r) => s + r.count, 0);
 
+  // --- Netze/Stoffe (textil2) nach Groesse + Farbe ---
+  const textileMap = new Map();
+  for (const tx of (model.textiles ? model.textiles.values() : [])) {
+    const key = tx.w + "x" + tx.h + "|" + tx.color;
+    if (!textileMap.has(key)) textileMap.set(key, { w: tx.w, h: tx.h, color: tx.color, count: 0 });
+    textileMap.get(key).count++;
+  }
+  const textiles = [...textileMap.values()].map((r) => ({
+    key: r.w + "x" + r.h + "|" + r.color, w: r.w, h: r.h,
+    color: r.color, colorName: colorName(r.color), count: r.count,
+  })).sort((a, b) => b.count - a.count);
+  const textileCount = textiles.reduce((s, r) => s + r.count, 0);
+
+  // --- Rutschen/Daecher (slide*/roof2) nach Art (dekorativ, ohne Preis) ---
+  const slideMap = new Map();
+  for (const sl of (model.slides ? model.slides.values() : [])) {
+    slideMap.set(sl.kind, (slideMap.get(sl.kind) || 0) + 1);
+  }
+  const slides = [...slideMap.entries()].map(([kind, count]) => ({ key: kind, kind, count }))
+    .sort((a, b) => b.count - a.count);
+  const slideCount = slides.reduce((s, r) => s + r.count, 0);
+
   // --- Verstaerkungen (Profile in verstaerkten Rohren) ---
   // Verstaerkungsprofile (heute Holz, frueher Alu) werden in die Rohre geschoben
   // und kommen in 40-cm-Laengen. Pro 40 cm verstaerkter Lauf-Laenge ein Stueck;
@@ -267,10 +289,10 @@ export function computeBOM(model) {
   );
 
   return {
-    tubes, connectors, panels, reinforcements, openEnds,
+    tubes, connectors, panels, reinforcements, openEnds, textiles, slides,
     totals: {
       tubes: tubeCount, connectors: connCount, panels: panelCount,
-      reinforcements: reinfCount, price,
+      reinforcements: reinfCount, textiles: textileCount, slides: slideCount, price,
     },
   };
 }

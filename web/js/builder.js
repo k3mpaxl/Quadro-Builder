@@ -113,6 +113,8 @@ export class Builder {
       for (const id of s.nodeIds) target.add(id);
       for (const id of s.tubeIds) target.add(id);
       for (const id of s.panelIds) target.add(id);
+      for (const id of s.textileIds || []) target.add(id);
+      for (const id of s.slideIds || []) target.add(id);
     }
     return { done, current };
   }
@@ -621,22 +623,35 @@ export class Builder {
       this.refresh();
       return;
     }
-    // 2. bestehende Kupplung auswaehlen
+    // 2. bestehende Kupplung auswaehlen ODER Teil umfaerben
     const pick = this.scene.pickBuild(e.clientX, e.clientY);
-    if (pick && pick.data.kind === "node") {
+    if (!pick) return;
+    if (pick.data.kind === "node") {
       this.selectedNodeId = pick.data.id;
       this.refresh();
+    } else if (pick.data.kind === "tube" || pick.data.kind === "panel" || pick.data.kind === "textile") {
+      // Mit gewaehlter Farbe auf ein Rohr/eine Platte/ein Netz klicken faerbt es um.
+      let changed;
+      this.recordHistory(() => { changed = this.model.setColorOf(pick.data.kind, pick.data.id, this.color); });
+      if (changed) {
+        this.onNotice("Farbe geändert.");
+        this.refresh();
+      }
     }
   }
 
   _clickDelete(e) {
-    const pick = this.scene.pickBuild(e.clientX, e.clientY);
+    const pick = this.scene.pickForDelete(e.clientX, e.clientY);
     if (!pick) return;
     this.recordHistory(() => {
       if (pick.data.kind === "tube") {
         this.model.removeTube(pick.data.id);
       } else if (pick.data.kind === "panel") {
         this.model.removePanel(pick.data.id);
+      } else if (pick.data.kind === "textile") {
+        this.model.removeTextile(pick.data.id);
+      } else if (pick.data.kind === "slide") {
+        this.model.removeSlide(pick.data.id);
       } else if (pick.data.kind === "clamp") {
         this.model.removeClamp(pick.data.id);
       } else if (pick.data.kind === "node") {

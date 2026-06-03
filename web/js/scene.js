@@ -60,6 +60,8 @@ export class SceneManager {
     this.pickTubes = [];
     this.pickPanels = [];
     this.pickClamps = [];
+    this.pickTextiles = [];
+    this.pickSlides = [];
     this.handleMeshes = [];
     this.labelMeshes = [];
 
@@ -184,6 +186,177 @@ export class SceneManager {
       });
     }
     return this._materials["c45"];
+  }
+
+  // Rutschen-Material je Art, SOLIDE (Gregor): gerade Rutsche rot, Bogenrutsche
+  // gruen, Auslauf gelb, Dach grau. Im Aufbau-Modus hervorgehoben.
+  _slideMatFor(kind, isCurrent) {
+    const COL = {
+      "slide2": 0xd23b3b, "slide-new2": 0xd23b3b,  // gerade Rutsche = rot
+      "curved-slide2": 0x37a23f,                    // Bogenrutsche = gruen
+      "slide-end2": 0xf0c020,                       // Auslauf = gelb
+      "roof2": 0x9aa3ad,                            // Dach = grau
+    };
+    const key = "slidem_" + kind + (isCurrent ? "_c" : "");
+    if (!this._materials[key]) {
+      this._materials[key] = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(COL[kind] || 0x9aa3ad), roughness: 0.6, metalness: 0.05,
+        side: THREE.DoubleSide,
+        emissive: new THREE.Color(isCurrent ? 0x3a2400 : 0x000000),
+      });
+    }
+    return this._materials[key];
+  }
+
+  // Gerenderte Mitte eines Rutschen-Endstuecks (mit den Viewer-Offsets), damit
+  // die Bogenrutsche dort optisch ankommt (nicht an der rohen QDF-Position).
+  _slideEndRenderedCenter(se) {
+    const g = new THREE.Group();
+    g.position.set(se.x, se.y, se.z);
+    if (se.quat && se.quat.length === 4) {
+      const Rz90 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
+      g.quaternion.set(se.quat[0], se.quat[1], se.quat[2], se.quat[3]).normalize().multiply(Rz90).normalize();
+    }
+    const size = 35, depth = 0.4;
+    g.translateZ(-size * 0.75); g.translateX(depth * 2); g.translateY(size * 0.5); g.rotateY(Math.PI / 2);
+    g.updateMatrixWorld(true);
+    return new THREE.Vector3(0, -size / 2, depth / 2).applyMatrix4(g.matrixWorld);
+  }
+
+  // Anschlusspunkt Rutschenkoerper <-> Auslauf: etwas ueber der Endstueck-Mitte.
+  // Der Rutschenkoerper (Bogen/gerade) ENDET hier, der Auslauf BEGINNT hier -> kein
+  // Versatz, gleicher Punkt = sauberer Uebergang. Der Auslauf faellt von hier auf
+  // Bodenhoehe ab und flacht aus.
+  _slideEndConnectPoint(se) {
+    // QDF-ROHposition (nicht die magisch versetzte Viewer-Mitte!) + 12 cm hoch.
+    // So hat die Bogenrutsche zu IHREM Folgeteil immer denselben festen Versatz
+    // -> sie sieht in jeder Datei gleich aus (C0065 = C0076).
+    return new THREE.Vector3(se.x, se.y + 12, se.z);
+  }
+
+  // U-Rinnen-Querschnitt EINES Rutschen-Segments: flacher Rutschboden + 2 deutlich
+  // hochgezogene Seitenwangen (Gregor: "wie eine Rinne, links/rechts steigen die
+  // Seitenraender deutlich hoch"). T=Laenge, Nrm=Flaechennormale(oben), W=Breite.
+  _addSlideSegment(mat, st, id, mid, T, Nrm, W, segLen) {
+    const width = 35, floor = 1.6, wallH = 11, wallT = 2.6;
+    const basis = new THREE.Matrix4().makeBasis(T, Nrm, W);
+    const add = (l, h, d, offW, offN) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(l, h, d), mat);
+      mesh.quaternion.setFromRotationMatrix(basis);
+      mesh.position.copy(mid).addScaledVector(W, offW).addScaledVector(Nrm, offN);
+      mesh.userData = { kind: "slide", id };
+      this.buildGroup.add(mesh);
+      if (st !== "future") this.pickSlides.push(mesh);
+    };
+    add(segLen, floor, width, 0, 0);                                  // Rutschboden
+    add(segLen, wallH, wallT, width / 2 - wallT / 2, wallH / 2);      // Seitenwange rechts
+    add(segLen, wallH, wallT, -(width / 2 - wallT / 2), wallH / 2);   // Seitenwange links
+  }
+
+  // Legt einen Rutschenkoerper als U-Rinne entlang einer Bahn bez(t)∈[0,1] an.
+  // Breitenachse pro Segment = T×up (Flaeche faellt mit der Bahn, Rinne folgt
+  // Kurve/Twist; ~senkrechte Segmente behalten die vorige Achse, kein Vorzeichen-Flip).
+  _addSlideAlongCurve(mat, st, id, bez, SEG) {
+    const up = new THREE.Vector3(0, 1, 0);
+    let prev = bez(0), prevW = null;
+    for (let i = 1; i <= SEG; i++) {
+      const cur = bez(i / SEG);
+      const T = cur.clone().sub(prev);
+      const segLen = T.length();
+      if (segLen < 0.01) { prev = cur; continue; }
+      T.normalize();
+      let W = new THREE.Vector3().crossVectors(T, up);
+      if (W.lengthSq() < 0.02) W = prevW ? prevW.clone() : new THREE.Vector3(1, 0, 0);
+      W.normalize();
+      if (prevW && W.dot(prevW) < 0) W.negate();
+      prevW = W;
+      const Nrm = new THREE.Vector3().crossVectors(W, T).normalize();
+      const mid = prev.clone().add(cur).multiplyScalar(0.5);
+      this._addSlideSegment(mat, st, id, mid, T, Nrm, W, segLen * 1.06);
+      prev = cur;
+    }
+  }
+
+  // FESTE Austrittsrichtung einer Bogenrutsche (identisch zur Berechnung in
+  // _addCurvedSlide): nach der 90°-Drehung in der PERPENDIKULAEREN kardinalen
+  // Richtung zum waagerechten Einlauf, ~33° abwaerts. Damit der Auslauf knickfrei
+  // an die Bogenrutsche anschliesst.
+  _curvedSlideExit(sl, model) {
+    let target = null, bestD = Infinity;
+    for (const s2 of model.slides.values()) {
+      if (s2 === sl) continue;
+      if (s2.kind !== "slide2" && s2.kind !== "slide-new2" && s2.kind !== "slide-end2") continue;
+      if (s2.y > sl.y - 1) continue;
+      const d = (s2.x - sl.x) ** 2 + (s2.y - sl.y) ** 2 + (s2.z - sl.z) ** 2;
+      if (d < bestD) { bestD = d; target = s2; }
+    }
+    const dx = target ? target.x - sl.x : -60;
+    const dz = target ? target.z - sl.z : -60;
+    const exitH = Math.abs(dz) >= Math.abs(dx)
+      ? new THREE.Vector3(Math.sign(dx) || -1, 0, 0)
+      : new THREE.Vector3(0, 0, Math.sign(dz) || -1);
+    return exitH.multiplyScalar(1.4).add(new THREE.Vector3(0, -1, 0)).normalize();
+  }
+
+  // Bogenrutsche: gekrümmte Rutschflaeche, die KARDINAL+waagerecht am Anschluss
+  // beginnt (kein 45°) und SENKRECHT nach unten ins Rutschen-Endstueck laeuft
+  // (Gregor: "schliesst gekruemmt nach unten an slide end an"). Kubische Bézier:
+  //   P0(Bogen) -> C1 = P0 + Kardinalrichtung·d  (waagerechter, achsparalleler Start)
+  //             -> C2 = ueber P3                 (senkrechtes Ende)
+  //             -> P3 (gerenderte slide-end-Mitte).
+  // Der frueher diagonale Kontrollpunkt (P2.x,P0.y,P2.z) erzeugte die 45°-Drehung.
+  _addCurvedSlide(sl, model, mat, st) {
+    const P0 = new THREE.Vector3(sl.x, sl.y, sl.z);
+    // Die Bogenrutsche geht in das NAECHSTE Rutschenteil ueber -- das kann eine
+    // GERADE Rutsche (slide2) ODER direkt das Endstueck sein (in C0065: gerade
+    // Rutsche; in C0076: Endstueck). Nimm das naechstgelegene unterhalb.
+    let target = null, bestD = Infinity;
+    for (const s2 of model.slides.values()) {
+      if (s2.kind !== "slide2" && s2.kind !== "slide-new2" && s2.kind !== "slide-end2") continue;
+      if (s2.y > sl.y - 1) continue; // nur tiefer liegende Teile
+      const d = (s2.x - sl.x) ** 2 + (s2.y - sl.y) ** 2 + (s2.z - sl.z) ** 2;
+      if (d < bestD) { bestD = d; target = s2; }
+    }
+    let P3;
+    if (target) {
+      // Endstueck: gerenderte Mitte (mit Offsets); gerade Rutsche: QDF-Position
+      // (= Beginn der Rutsche; der feste Versatz Bogen->Folgeteil ist QDF-zu-QDF).
+      P3 = target.kind === "slide-end2"
+        ? this._slideEndConnectPoint(target)
+        : new THREE.Vector3(target.x, target.y, target.z);
+    } else {
+      const fwd = new THREE.Vector3(1, 0, 0);
+      if (sl.quat && sl.quat.length === 4) fwd.applyQuaternion(new THREE.Quaternion(sl.quat[0], sl.quat[1], sl.quat[2], sl.quat[3]).normalize());
+      fwd.y = 0; if (fwd.lengthSq() < 0.01) fwd.set(1, 0, 0); fwd.normalize();
+      P3 = P0.clone().addScaledVector(fwd, 60).add(new THREE.Vector3(0, -80, 0));
+    }
+    // Waagerechte Laufrichtung auf die naechste KARDINALE Achse snappen (kein 45°).
+    const dx = P3.x - P0.x, dz = P3.z - P0.z;
+    const card = Math.abs(dz) >= Math.abs(dx)
+      ? new THREE.Vector3(0, 0, Math.sign(dz) || -1)
+      : new THREE.Vector3(Math.sign(dx) || -1, 0, 0);
+    const horizDist = Math.hypot(dx, dz) || 1;
+    const C1 = P0.clone().addScaledVector(card, horizDist * 0.5);  // waagerechter, kardinaler Start
+    // FESTE Austrittsrichtung der Bogenrutsche -- UNABHAENGIG vom Folgeteil, damit
+    // der Bogen in jeder Datei gleich aussieht (Gregor: C0065 richtig, C0076 war
+    // anders/falsch). Nach der 90°-Drehung laeuft sie in der PERPENDIKULAEREN
+    // kardinalen Richtung, ~33° abwaerts (= Standard-Anschluss an die gerade
+    // Rutsche). Frueher: senkrecht (Endstueck) vs. Folgeteil-Richtung -> uneinheitlich.
+    const exitH = Math.abs(card.z) > 0.5
+      ? new THREE.Vector3(Math.sign(dx) || -1, 0, 0)
+      : new THREE.Vector3(0, 0, Math.sign(dz) || -1);
+    const exitDir = exitH.multiplyScalar(1.4).add(new THREE.Vector3(0, -1, 0)).normalize();
+    const span = P0.distanceTo(P3) || 1;
+    const C2 = P3.clone().addScaledVector(exitDir, -span * 0.45);
+    const bez = (t) => {
+      const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, e = t * t * t;
+      return new THREE.Vector3(
+        a * P0.x + b * C1.x + c * C2.x + e * P3.x,
+        a * P0.y + b * C1.y + c * C2.y + e * P3.y,
+        a * P0.z + b * C1.z + c * C2.z + e * P3.z);
+    };
+    // Bananenfoermiger, durchgehend gebogener Rinnenkoerper entlang der Bézier.
+    this._addSlideAlongCurve(mat, st, sl.id, bez, 16);
   }
 
   // Nicht-achsparallele Richtungen der Rohre an einem Knoten.
@@ -449,6 +622,8 @@ export class SceneManager {
     this.pickTubes = [];
     this.pickPanels = [];
     this.pickClamps = [];
+    this.pickTextiles = [];
+    this.pickSlides = [];
 
     const tubeRadius = geometry().tubeRadius;
     const armRadius = geometry().armRadius; // C45-Arm: ~42 mm, duenner als das Rohr
@@ -457,6 +632,12 @@ export class SceneManager {
     const suggest = opts.suggest || null;
     const reinforce = opts.reinforce || false;
     const cs = geometry().connectorSize;
+    // Echte Kupplungs-Arme (aus variant2 importiert, node.arms): kurze Stutzen
+    // mit Arm-Durchmesser (~42 mm). Offene Arme ragen heraus; von Rohren belegte
+    // stecken im Rohr (Arm dünner als Rohr) -> sichtbar nur die freien Arme.
+    const armStubLen = cs * 0.85;
+    const armStubGeo = new THREE.CylinderGeometry(armRadius, armRadius, armStubLen, 12);
+    const armStubOff = cs / 2 + armStubLen / 2 - 0.4;
 
     // Zustand eines Teils im Aufbaumodus: "done" | "current" | "future".
     const stateOf = (id) => {
@@ -479,13 +660,36 @@ export class SceneManager {
       if (!n.c45body) {
         const mesh = new THREE.Mesh(this._connGeometry(), mat);
         mesh.position.set(n.x, n.y, n.z);
-        // Schräg-Konnektor: liegt auf einer Schräge -> Wuerfel um 45° um die
-        // Drehachse der Schräge drehen (passt zur gedrehten 90°-Kupplung).
-        const sa = this._slopeRotationAxis(model, n);
-        if (sa) mesh.quaternion.setFromAxisAngle(sa, Math.PI / 4);
+        // Importierte Kupplung: Wuerfel exakt um ihre Quaternion drehen, damit die
+        // Arme aus den Flaechen kommen -- auch bei Rampenwinkeln (30°/60°). Kardinale
+        // Kupplungen sind invariant. Manuell gebaute Schraegen (ohne quat) drehen wie
+        // bisher 45° um die Schraegen-Achse (_slopeRotationAxis).
+        if (n.quat && n.quat.length === 4) {
+          mesh.quaternion.set(n.quat[0], n.quat[1], n.quat[2], n.quat[3]).normalize();
+        } else {
+          const sa = this._slopeRotationAxis(model, n);
+          if (sa) mesh.quaternion.setFromAxisAngle(sa, Math.PI / 4);
+        }
         mesh.userData = { kind: "node", id: n.id };
         this.buildGroup.add(mesh);
         if (st !== "future") this.pickNodes.push(mesh);
+
+        // Echte Arm-Stutzen der Kupplung (variant2 -> node.arms): zeigen alle
+        // physisch vorhandenen Arme inkl. OFFENER -- der Knoten sieht aus wie das
+        // reale Teil (Wuerfel + Arme), und freie Arme markieren Anbau-Stellen.
+        if (n.arms) {
+          for (const d of n.arms) {
+            const dv = new THREE.Vector3(d[0], d[1], d[2]);
+            if (dv.lengthSq() < 0.1) continue;
+            dv.normalize();
+            const stub = new THREE.Mesh(armStubGeo, mat);
+            stub.position.set(n.x + dv.x * armStubOff, n.y + dv.y * armStubOff, n.z + dv.z * armStubOff);
+            stub.quaternion.setFromUnitVectors(UP, dv);
+            stub.userData = { kind: "node", id: n.id };
+            this.buildGroup.add(stub);
+            if (st !== "future") this.pickNodes.push(stub);
+          }
+        }
       }
 
       // 45-Grad-Winkelkupplung (C45). Echtes Teil: eine Huelse wird auf einen
@@ -669,6 +873,145 @@ export class SceneManager {
         if (st !== "future") this.pickClamps.push(mesh);
       }
     }
+
+    // Netze/Stoffe (textil2): halbtransparente Flaeche ueber 4 Eck-Kupplungen.
+    for (const tx of (model.textiles ? model.textiles.values() : [])) {
+      if (reinforce) continue;
+      const ns = tx.nodes.map((id) => model.nodes.get(id));
+      if (ns.some((n) => !n)) continue;
+      const st = stateOf(tx.id);
+      const [A, B, , D] = ns;
+      const va = new THREE.Vector3(A.x, A.y, A.z);
+      const u = new THREE.Vector3(B.x, B.y, B.z).sub(va);
+      const w = new THREE.Vector3(D.x, D.y, D.z).sub(va);
+      const center = ns
+        .reduce((acc, n) => acc.add(new THREE.Vector3(n.x, n.y, n.z)), new THREE.Vector3())
+        .multiplyScalar(0.25);
+      const xAxis = u.clone().normalize();
+      const zAxis = w.clone().normalize();
+      const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+      const geo = new THREE.BoxGeometry(u.length(), 0.6, w.length());
+      const mat = st === "future" ? this._ghostMaterial() : new THREE.MeshStandardMaterial({
+        color: new THREE.Color(colorHex(tx.color)), roughness: 0.95, metalness: 0.0,
+        side: THREE.DoubleSide, transparent: true, opacity: 0.5,
+        emissive: new THREE.Color(st === "current" ? 0x3a2400 : 0x000000),
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
+      mesh.position.copy(center);
+      mesh.userData = { kind: "textile", id: tx.id };
+      this.buildGroup.add(mesh);
+      if (st !== "future") this.pickTextiles.push(mesh);
+    }
+
+    // Rutschen/Daecher: eigene Geometrie je Art (Bogen/gerade/Auslauf = U-Rinne,
+    // Dach = flache Kappe). slide-end2-Position via _slideEndRenderedCenter.
+    for (const sl of (model.slides ? model.slides.values() : [])) {
+      if (reinforce) continue;
+      const st = stateOf(sl.id);
+      const mat = st === "future" ? this._ghostMaterial() : this._slideMatFor(sl.kind, st === "current");
+      // Bogenrutsche: gekrümmte 90°-Form oben, fuehrt nach unten ins Folgeteil.
+      if (sl.kind === "curved-slide2") { this._addCurvedSlide(sl, model, mat, st); continue; }
+      // Gerade Rutsche: schraege Rampe von ihrer Position zum naechsten Folgeteil.
+      if (sl.kind === "slide2" || sl.kind === "slide-new2") { this._addStraightSlide(sl, model, mat, st); continue; }
+      // Rutschenauslauf: kurzes, flaches U-Rinnen-Endstueck mit offenem Auslauf.
+      if (sl.kind === "slide-end2") { this._addSlideEnd(sl, model, mat, st); continue; }
+      // roof2: flache, horizontale Abdeckung am First (Viewer kennt roof2 nicht).
+      if (sl.kind === "roof2") {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(80, 0.6, 80), mat);
+        mesh.position.set(sl.x, sl.y, sl.z);
+        mesh.userData = { kind: "slide", id: sl.id };
+        this.buildGroup.add(mesh);
+        if (st !== "future") this.pickSlides.push(mesh);
+      }
+    }
+  }
+
+  // Gerade Rutsche (slide2/slide-new2): schraege Rampe (Rutschflaeche + 2 erhoehte
+  // Seitenholme) von ihrer QDF-Position zum NAECHSTEN tiefer liegenden Rutschenteil
+  // (Endstueck oder weitere gerade Rutsche). Die QDF-Kette legt das Folgeteil genau
+  // an ihr Ende -> die feste ~140cm-Form ergibt sich aus der Distanz. Ersetzt die
+  // fehlplatzierte Viewer-Transformation (fester Block + rotateY45 + Offsets).
+  _addStraightSlide(sl, model, mat, st) {
+    const P0 = new THREE.Vector3(sl.x, sl.y, sl.z);
+    let target = null, bestD = Infinity;
+    for (const s2 of model.slides.values()) {
+      if (s2 === sl) continue;
+      if (s2.kind !== "slide2" && s2.kind !== "slide-new2" && s2.kind !== "slide-end2") continue;
+      if (s2.y > sl.y - 1) continue;
+      const d = (s2.x - sl.x) ** 2 + (s2.y - sl.y) ** 2 + (s2.z - sl.z) ** 2;
+      if (d < bestD) { bestD = d; target = s2; }
+    }
+    let P1;
+    if (target) {
+      P1 = target.kind === "slide-end2" ? this._slideEndConnectPoint(target) : new THREE.Vector3(target.x, target.y, target.z);
+    } else {
+      const fwd = new THREE.Vector3(1, 0, 0);
+      if (sl.quat && sl.quat.length === 4) fwd.applyQuaternion(new THREE.Quaternion(sl.quat[0], sl.quat[1], sl.quat[2], sl.quat[3]).normalize());
+      if (fwd.lengthSq() < 0.01) fwd.set(1, 0, 0); fwd.normalize();
+      P1 = P0.clone().addScaledVector(fwd, 130).add(new THREE.Vector3(0, -60, 0));
+    }
+    if (P0.distanceTo(P1) < 1) return;
+    // Plan-Verlauf GERADE (Kontrollpunkt horizontal mittig), aber Seitenprofil
+    // leicht KONKAV (Gregor: "oben steiler angesetzt, unten flacher auslaufend"):
+    // Kontrollpunkt auf ~1/3-Hoehe -> steiler Einstieg oben, flacheres Ende unten.
+    const C = new THREE.Vector3((P0.x + P1.x) / 2, P1.y + (P0.y - P1.y) * 0.32, (P0.z + P1.z) / 2);
+    const bez = (t) => {
+      const u = 1 - t;
+      return new THREE.Vector3(
+        u * u * P0.x + 2 * u * t * C.x + t * t * P1.x,
+        u * u * P0.y + 2 * u * t * C.y + t * t * P1.y,
+        u * u * P0.z + 2 * u * t * C.z + t * t * P1.z);
+    };
+    // U-Rinne mit hohen Seitenwangen entlang der leicht gebogenen Rampe.
+    this._addSlideAlongCurve(mat, st, sl.id, bez, 9);
+  }
+
+  // Rutschenauslauf (Endstueck): kurzes, FLACHES U-Rinnen-Stueck. Hinten (am
+  // Anschluss an den Rutschenkoerper) etwas hoeher, laeuft nach vorne flach und
+  // OFFEN aus (Bremszone). Auslaufrichtung = horizontale (kardinale) Laufrichtung
+  // der einlaufenden Rutsche. Ersetzt das alte 35×35-Viewer-Kaestchen.
+  _addSlideEnd(sl, model, mat, st) {
+    // Start = GLEICHER Anschlusspunkt, an dem der Rutschenkoerper endet (kein Versatz).
+    const P0 = this._slideEndConnectPoint(sl);
+    const groundY = sl.y; // QDF-Bodenhoehe des Auslaufs
+    // Einlaufende Rutsche (naechstes Rutschenteil OBERHALB).
+    let feeder = null, bestD = Infinity;
+    for (const s2 of model.slides.values()) {
+      if (s2 === sl) continue;
+      if (s2.kind !== "slide2" && s2.kind !== "slide-new2" && s2.kind !== "curved-slide2") continue;
+      if (s2.y < sl.y - 1) continue;
+      const d = (s2.x - sl.x) ** 2 + (s2.y - sl.y) ** 2 + (s2.z - sl.z) ** 2;
+      if (d < bestD) { bestD = d; feeder = s2; }
+    }
+    // Tangente, mit der die Rutsche hier ankommt -> KNICKFREIER Auslauf-Start:
+    // Bogenrutsche = ihre feste Austrittsrichtung; gerade Rutsche = ihr Gefaelle.
+    const entryT = feeder
+      ? (feeder.kind === "curved-slide2"
+          ? this._curvedSlideExit(feeder, model)
+          : P0.clone().sub(new THREE.Vector3(feeder.x, feeder.y, feeder.z)).normalize())
+      : new THREE.Vector3(0, -1, 0);
+    // Horizontale Auslaufrichtung = horizontale (kardinale) Komponente der Einlauf-
+    // tangente -> der Auslauf laeuft in DERSELBEN Richtung weiter wie die Rutsche.
+    let h = new THREE.Vector3(entryT.x, 0, entryT.z);
+    if (h.lengthSq() < 0.04 && feeder) h.set(P0.x - feeder.x, 0, P0.z - feeder.z);
+    if (h.lengthSq() < 0.01) h.set(1, 0, 0);
+    const fwd = Math.abs(h.z) >= Math.abs(h.x)
+      ? new THREE.Vector3(0, 0, Math.sign(h.z) || -1)
+      : new THREE.Vector3(Math.sign(h.x) || -1, 0, 0);
+    // Kubische Bézier: P0 (Anschluss, Tangente=Rutschenrichtung) -> abfallend ->
+    // flacher, offener Auslauf am Boden in fwd-Richtung.
+    const front = new THREE.Vector3(P0.x + fwd.x * 50, groundY, P0.z + fwd.z * 50);
+    const C1 = P0.clone().addScaledVector(entryT, 14);
+    const C2 = front.clone().addScaledVector(fwd, -18);
+    const bez = (t) => {
+      const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, e = t * t * t;
+      return new THREE.Vector3(
+        a * P0.x + b * C1.x + c * C2.x + e * front.x,
+        a * P0.y + b * C1.y + c * C2.y + e * front.y,
+        a * P0.z + b * C1.z + c * C2.z + e * front.z);
+    };
+    this._addSlideAlongCurve(mat, st, sl.id, bez, 7);
   }
 
   // --- Handles (Bau-Anfasser) --------------------------------------------
@@ -745,7 +1088,19 @@ export class SceneManager {
 
   pickBuild(clientX, clientY) {
     const hit = this.raycastObjects(
-      clientX, clientY, [...this.pickNodes, ...this.pickTubes, ...this.pickPanels, ...this.pickClamps]
+      clientX, clientY,
+      [...this.pickNodes, ...this.pickTubes, ...this.pickPanels, ...this.pickClamps, ...this.pickTextiles]
+    );
+    return hit ? { object: hit.object, data: hit.object.userData, point: hit.point } : null;
+  }
+
+  // Wie pickBuild, aber inkl. Rutschen/Dächer (nur fuers Loeschen relevant; im
+  // Bau-Modus sollen die dekorativen Platzhalter keine Klicks abfangen).
+  pickForDelete(clientX, clientY) {
+    const hit = this.raycastObjects(
+      clientX, clientY,
+      [...this.pickNodes, ...this.pickTubes, ...this.pickPanels, ...this.pickClamps,
+       ...this.pickTextiles, ...this.pickSlides]
     );
     return hit ? { object: hit.object, data: hit.object.userData, point: hit.point } : null;
   }
@@ -765,9 +1120,13 @@ export class SceneManager {
   }
 
   _disposeGroup(group) {
+    const cached = [this._connGeo, this._clampGeo, this._clampRingGeo, this._c45Geo, this._c45StubGeo];
     for (let i = group.children.length - 1; i >= 0; i--) {
       const c = group.children[i];
-      if (c.geometry && c.geometry !== this._connGeo && c.geometry !== this._clampGeo && c.geometry !== this._clampRingGeo && c.geometry !== this._c45Geo && c.geometry !== this._c45StubGeo) c.geometry.dispose();
+      // Rekursiv (verschachtelte Gruppen, z.B. Rutschen) Geometrien freigeben.
+      c.traverse((o) => {
+        if (o.geometry && !cached.includes(o.geometry)) o.geometry.dispose();
+      });
       group.remove(c);
     }
   }

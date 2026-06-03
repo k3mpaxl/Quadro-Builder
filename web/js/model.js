@@ -14,6 +14,8 @@ export class BuildModel {
     this.tubes = new Map();  // id -> { id, a, b, tubeId, color, length }
     this.panels = new Map(); // id -> { id, nodes:[4 ids], panelId, color }
     this.clamps = new Map(); // id -> { id, x, y, z, connectorId } (Doppelrohrverbinder/Klemme)
+    this.textiles = new Map(); // id -> { id, nodes:[4 ids], w, h, color } (Netz/Stoff, textil2)
+    this.slides = new Map();   // id -> { id, x, y, z, dir, kind } (Rutsche, slide*/roof2, dekorativ)
     this._seq = 1;
   }
 
@@ -171,6 +173,30 @@ export class BuildModel {
     this.panels.delete(id);
   }
 
+  removeTextile(id) {
+    this.textiles.delete(id);
+  }
+
+  removeSlide(id) {
+    this.slides.delete(id);
+  }
+
+  // Farbe eines Rohrs / einer Platte / eines Netzes setzen (Klick im Bau-Modus
+  // mit gewaehlter Farbe). Liefert true, wenn sich die Farbe geaendert hat.
+  setColorOf(kind, id, color) {
+    const map = kind === "tube" ? this.tubes
+      : kind === "panel" ? this.panels
+      : kind === "textile" ? this.textiles : null;
+    if (!map) return false;
+    const el = map.get(id);
+    if (!el || el.color === color) return false;
+    // Arm-/Link-Kanten (C45-Adapter, Doppelrohr-Verbindung) sind keine echten
+    // Rohre und werden nicht eingefaerbt.
+    if (kind === "tube" && (el.arm || el.link)) return false;
+    el.color = color;
+    return true;
+  }
+
   // --- Klemmen (Doppelrohrverbinder) -------------------------------------
   // Eine Klemme sitzt als freier Punkt auf/an einem Rohr und verbindet zwei
   // Rohre laengs (ermoeglicht Klappen, bewegliche und schraege Elemente).
@@ -203,6 +229,10 @@ export class BuildModel {
         if (!this.tubeBetween(ns[k], ns[(k + 1) % 4])) ok = false;
       }
       if (!ok) this.panels.delete(p.id);
+    }
+    // Netze/Stoffe (textil2): entfernen, sobald eine ihrer 4 Eck-Kupplungen fehlt.
+    for (const t of [...this.textiles.values()]) {
+      if (!t.nodes.every((id) => this.nodes.has(id))) this.textiles.delete(t.id);
     }
   }
 
@@ -363,6 +393,8 @@ export class BuildModel {
     this.tubes.clear();
     this.panels.clear();
     this.clamps.clear();
+    this.textiles.clear();
+    this.slides.clear();
     this._seq = 1;
   }
 
@@ -376,6 +408,8 @@ export class BuildModel {
         if (n.c45body) o.c45body = true; // Adapter-Koerper am Arm-Ende der C45
         if (n.c45axis) o.c45axis = n.c45axis; // kardinale Huelsenachse des Adapters
         if (n.armDirs) o.armDirs = n.armDirs; // gespeicherte Arm-Richtungen (rotierte Kupplung)
+        if (n.arms) o.arms = n.arms; // echte Arm-Stutzen aus variant2 (Darstellung)
+        if (n.quat) o.quat = n.quat; // Wuerfel-Orientierung der Kupplung (Three x,y,z,w)
         return o;
       }),
       tubes: [...this.tubes.values()].map((t) => {
@@ -394,6 +428,14 @@ export class BuildModel {
         if (c.off) o.off = c.off;   // Versatz zur zweiten Tube (die "8")
         return o;
       }),
+      textiles: [...this.textiles.values()].map((t) => ({
+        id: t.id, nodes: t.nodes.slice(), w: t.w, h: t.h, color: t.color,
+      })),
+      slides: [...this.slides.values()].map((s) => {
+        const o = { id: s.id, x: round(s.x), y: round(s.y), z: round(s.z), kind: s.kind };
+        if (s.quat) o.quat = s.quat; // Three-Quaternion x,y,z,w (vor Rz90)
+        return o;
+      }),
     };
   }
 
@@ -402,7 +444,7 @@ export class BuildModel {
     if (!data || !Array.isArray(data.nodes)) return;
     let maxSeq = 0;
     for (const n of data.nodes) {
-      this.nodes.set(n.id, { id: n.id, x: n.x, y: n.y, z: n.z, c45: !!n.c45, c45body: !!n.c45body, c45axis: n.c45axis || null, armDirs: n.armDirs || null });
+      this.nodes.set(n.id, { id: n.id, x: n.x, y: n.y, z: n.z, c45: !!n.c45, c45body: !!n.c45body, c45axis: n.c45axis || null, armDirs: n.armDirs || null, arms: n.arms || null, quat: n.quat || null });
       maxSeq = Math.max(maxSeq, parseSeq(n.id));
     }
     for (const t of data.tubes || []) {
@@ -424,6 +466,14 @@ export class BuildModel {
         dir: c.dir || null, off: c.off || null,
       });
       maxSeq = Math.max(maxSeq, parseSeq(c.id));
+    }
+    for (const t of data.textiles || []) {
+      this.textiles.set(t.id, { id: t.id, nodes: t.nodes.slice(), w: t.w, h: t.h, color: t.color });
+      maxSeq = Math.max(maxSeq, parseSeq(t.id));
+    }
+    for (const s of data.slides || []) {
+      this.slides.set(s.id, { id: s.id, x: s.x, y: s.y, z: s.z, quat: s.quat || null, kind: s.kind });
+      maxSeq = Math.max(maxSeq, parseSeq(s.id));
     }
     this._seq = maxSeq + 1;
   }
