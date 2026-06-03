@@ -180,9 +180,10 @@ export class SceneManager {
 
   _c45Material() {
     if (!this._materials["c45"]) {
+      // Schwarz wie die normalen Kupplungen (Gregor: die C45 sind auch schwarz).
       this._materials["c45"] = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(0xe8a33d), roughness: 0.5, metalness: 0.3,
-        emissive: new THREE.Color(0x3a2400),
+        color: new THREE.Color(connectorColor().hex), roughness: 0.6, metalness: 0.1,
+        emissive: new THREE.Color(0x000000),
       });
     }
     return this._materials["c45"];
@@ -195,13 +196,15 @@ export class SceneManager {
       "slide2": 0xd23b3b, "slide-new2": 0xd23b3b,  // gerade Rutsche = rot
       "curved-slide2": 0x37a23f,                    // Bogenrutsche = gruen
       "slide-end2": 0xf0c020,                       // Auslauf = gelb
-      "roof2": 0x9aa3ad,                            // Dach = grau
+      "roof2": 0x37a23f,                            // Dach-Tuch = gruen, durchsichtig
     };
+    const transp = kind === "roof2"; // Dach-Tuch durchsichtig wie ein Textil (Gregor)
     const key = "slidem_" + kind + (isCurrent ? "_c" : "");
     if (!this._materials[key]) {
       this._materials[key] = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(COL[kind] || 0x9aa3ad), roughness: 0.6, metalness: 0.05,
+        color: new THREE.Color(COL[kind] || 0x9aa3ad), roughness: transp ? 0.9 : 0.6, metalness: 0.05,
         side: THREE.DoubleSide,
+        transparent: transp, opacity: transp ? 0.5 : 1,
         emissive: new THREE.Color(isCurrent ? 0x3a2400 : 0x000000),
       });
     }
@@ -444,13 +447,29 @@ export class SceneManager {
     }
     const bodyPos = new THREE.Vector3(n.x - d.x * a, n.y - d.y * a, n.z - d.z * a);
     const sleeveVec = new THREE.Vector3().subVectors(bodyPos, G);
-    const sleeveLen = sleeveVec.length();
+    const fullLen = sleeveVec.length();
+    if (fullLen < 0.5) return null;
+    const sleeveDir = sleeveVec.clone().normalize();
+    const cs = geometry().connectorSize;
+    const Gv = new THREE.Vector3(G.x, G.y, G.z);
+    // Der ARM der Basiskupplung ragt vom Wuerfel nach aussen und STECKT in die
+    // C45-Huelse (Gregor: "Der Arm der Kupplung ragt in die Huelse der C45 rein").
+    // Die Huelse beginnt daher ~40% entlang des Arms (nicht am Wuerfel), der Arm
+    // ueberlappt ihre Innenseite.
+    const baseArmLen = Math.max(1.5, Math.min(cs, fullLen - cs / 2 - 1.5));
+    // Die Huelse sitzt KOMPLETT ueber dem Arm und beginnt direkt an der Kupplung
+    // (Wuerfelflaeche cs/2) (Gregor: "naeher heran, passt komplett auf den Arm").
+    const sleeveOff = Math.max(0, cs / 2 - 0.5);
+    const sleeveStart = Gv.clone().addScaledVector(sleeveDir, sleeveOff);
+    const sleeveLen = bodyPos.distanceTo(sleeveStart);
     if (sleeveLen < 0.5) return null;
     return {
       bodyPos,
-      sleeveDir: sleeveVec.clone().normalize(),
+      sleeveDir,
       sleeveLen,
-      sleeveMid: new THREE.Vector3().addVectors(G, bodyPos).multiplyScalar(0.5),
+      sleeveMid: sleeveStart.clone().add(bodyPos).multiplyScalar(0.5),
+      baseArmLen,
+      baseArmMid: Gv.clone().addScaledVector(sleeveDir, cs / 2 + baseArmLen / 2),
       armDir: d,
       armLen: a,
       armMid: new THREE.Vector3((bodyPos.x + n.x) / 2, (bodyPos.y + n.y) / 2, (bodyPos.z + n.z) / 2),
@@ -701,8 +720,19 @@ export class SceneManager {
           // am anderen Ende der Arm-Kante. Huelse laeuft kardinal von der Basis.
           const ad = this._c45AdapterGeo(model, n);
           if (ad) {
+            // Arm der Basiskupplung -- ragt vom Wuerfel in die C45-Huelse hinein.
+            if (ad.baseArmLen > 0.5) {
+              const baseArm = new THREE.Mesh(
+                new THREE.CylinderGeometry(armRadius, armRadius, ad.baseArmLen, 14),
+                this._c45Material());
+              baseArm.position.copy(ad.baseArmMid);
+              baseArm.quaternion.setFromUnitVectors(UP, ad.sleeveDir);
+              baseArm.userData = { kind: "node", id: n.id };
+              this.buildGroup.add(baseArm);
+            }
+            // C45-Huelse: etwas breiter als das Rohr, der Basis-Arm steckt darin.
             const sleeve = new THREE.Mesh(
-              new THREE.CylinderGeometry(tubeRadius * 1.05, tubeRadius * 1.05, ad.sleeveLen, 14),
+              new THREE.CylinderGeometry(tubeRadius * 1.18, tubeRadius * 1.18, ad.sleeveLen, 14),
               this._c45Material());
             sleeve.position.copy(ad.sleeveMid);
             sleeve.quaternion.setFromUnitVectors(UP, ad.sleeveDir);
@@ -916,14 +946,9 @@ export class SceneManager {
       if (sl.kind === "slide2" || sl.kind === "slide-new2") { this._addStraightSlide(sl, model, mat, st); continue; }
       // Rutschenauslauf: kurzes, flaches U-Rinnen-Endstueck mit offenem Auslauf.
       if (sl.kind === "slide-end2") { this._addSlideEnd(sl, model, mat, st); continue; }
-      // roof2: flache, horizontale Abdeckung am First (Viewer kennt roof2 nicht).
-      if (sl.kind === "roof2") {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(80, 0.6, 80), mat);
-        mesh.position.set(sl.x, sl.y, sl.z);
-        mesh.userData = { kind: "slide", id: sl.id };
-        this.buildGroup.add(mesh);
-        if (st !== "future") this.pickSlides.push(mesh);
-      }
+      // roof2 (Dach-Tuch): als GIEBEL ueber das Dach (von den C45-Traufen die
+      // Dachschraegen hoch, 90°-Knick am First, andere Schraege runter).
+      if (sl.kind === "roof2") { this._addRoof(sl, model, mat, st); continue; }
     }
   }
 
@@ -1012,6 +1037,66 @@ export class SceneManager {
         a * P0.z + b * C1.z + c * C2.z + e * front.z);
     };
     this._addSlideAlongCurve(mat, st, sl.id, bez, 7);
+  }
+
+  // Dach-Tuch (roof2) als GIEBEL: findet First (hoechste Knoten nahe roof2) + die
+  // C45-Traufen-Ecken und spannt zwei Dachschraegen-Flaechen auf, die sich am First
+  // mit ~90°-Knick treffen (Gregor: "startet bei den c45 kupplungen, entlang der
+  // Dachschraegen, 90°-Knick oben, andere Schraege zu den c45 kupplungen"). Findet
+  // er die Struktur nicht, faellt er auf eine flache Kappe zurueck.
+  _addRoof(sl, model, mat, st) {
+    const P = new THREE.Vector3(sl.x, sl.y, sl.z);
+    const nodes = [...model.nodes.values()];
+    const hxz = (n) => Math.hypot(n.x - P.x, n.z - P.z);
+    let maxY = -Infinity;
+    for (const n of nodes) if (hxz(n) < 80 && n.y > maxY) maxY = n.y;
+    const ridge = nodes.filter((n) => Math.abs(n.y - maxY) < 8 && hxz(n) < 80);
+    // C45-Traufen-Ecken: C45-Knoten im Dach-Hoehenband, nahe roof2.
+    const eaves = nodes.filter((n) => (n.c45 || n.c45body) && n.y < maxY - 15 && n.y > maxY - 115 && hxz(n) < 140);
+    if (ridge.length < 2 || eaves.length < 4) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(80, 0.6, 80), mat); // Fallback
+      m.position.copy(P); m.userData = { kind: "slide", id: sl.id };
+      this.buildGroup.add(m); if (st !== "future") this.pickSlides.push(m);
+      return;
+    }
+    // First-Achse = horizontale Achse mit groesster Spannweite unter den First-Knoten.
+    const rx = ridge.map((n) => n.x), rz = ridge.map((n) => n.z);
+    const alongZ = (Math.max(...rz) - Math.min(...rz)) >= (Math.max(...rx) - Math.min(...rx));
+    const ridgeKey = (n) => (alongZ ? n.z : n.x);
+    const slopeKey = (n) => (alongZ ? n.x : n.z);
+    const slopeCenter = alongZ ? P.x : P.z;
+    // First-Endpunkte (auf der Querposition von roof2).
+    const rMin = alongZ ? new THREE.Vector3(P.x, maxY, Math.min(...rz)) : new THREE.Vector3(Math.min(...rx), maxY, P.z);
+    const rMax = alongZ ? new THREE.Vector3(P.x, maxY, Math.max(...rz)) : new THREE.Vector3(Math.max(...rx), maxY, P.z);
+    // Zwei Seiten der Traufen (links/rechts der First-Achse).
+    for (const sign of [-1, 1]) {
+      const side = eaves.filter((n) => (slopeKey(n) - slopeCenter) * sign > 0);
+      if (side.length < 2) continue;
+      side.sort((a, b) => ridgeKey(a) - ridgeKey(b));
+      const eA = side[0], eB = side[side.length - 1];
+      // Quad: Traufe(min) -> Traufe(max) -> First(max) -> First(min).
+      this._addRoofQuad([
+        new THREE.Vector3(eA.x, eA.y, eA.z), new THREE.Vector3(eB.x, eB.y, eB.z),
+        ridgeKey(eB) >= ridgeKey(eA) ? rMax : rMin,
+        ridgeKey(eB) >= ridgeKey(eA) ? rMin : rMax,
+      ], mat, st, sl.id);
+    }
+  }
+
+  // Eine Dachschraegen-Flaeche (Rechteck-Quad aus 4 Ecken A,B,C,D) als duenne Platte.
+  _addRoofQuad(c, mat, st, id) {
+    const [A, B, , D] = c;
+    const u = B.clone().sub(A), w = D.clone().sub(A);
+    if (u.lengthSq() < 1 || w.lengthSq() < 1) return;
+    const center = A.clone().add(B).add(c[2]).add(D).multiplyScalar(0.25);
+    const xAxis = u.clone().normalize(), zAxis = w.clone().normalize();
+    const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(u.length(), 0.8, w.length()), mat);
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
+    mesh.position.copy(center);
+    mesh.userData = { kind: "slide", id };
+    this.buildGroup.add(mesh);
+    if (st !== "future") this.pickSlides.push(mesh);
   }
 
   // --- Handles (Bau-Anfasser) --------------------------------------------
