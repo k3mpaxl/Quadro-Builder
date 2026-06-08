@@ -592,6 +592,32 @@ export class SceneManager {
     return this._materials["ghost"];
   }
 
+  // Bau-Anfasser (Handle): 3 feste Varianten nach kind. War fruehers pro addHandle()-
+  // Aufruf ein neues Material (-> Leak), da _disposeGroup nur Geometrien freigibt.
+  _handleMaterial(kind) {
+    const key = "handle:" + kind;
+    if (!this._materials[key]) {
+      const isOrigin = kind === "origin";
+      const isDiag = kind === "diag";
+      this._materials[key] = new THREE.MeshBasicMaterial({
+        color: isOrigin ? 0x1a8cff : isDiag ? 0x8b3df5 : 0x18a558,
+        transparent: true, opacity: isOrigin ? 0.45 : 0.85,
+      });
+    }
+    return this._materials[key];
+  }
+
+  // Kandidaten-Feld fuer eine Platte (addPanelHandle): ein festes Material.
+  _panelHandleMaterial() {
+    if (!this._materials["panelHandle"]) {
+      this._materials["panelHandle"] = new THREE.MeshBasicMaterial({
+        color: 0x1a8cff, transparent: true, opacity: 0.35,
+        side: THREE.DoubleSide, depthWrite: false,
+      });
+    }
+    return this._materials["panelHandle"];
+  }
+
   // Hervorhebung der im aktuellen Aufbau-Schritt hinzukommenden Rohre.
   _tubeHighlight(colorId) {
     const key = "tubehl:" + colorId;
@@ -1123,10 +1149,7 @@ export class SceneManager {
     const geo = isOrigin
       ? new THREE.BoxGeometry(geometry().connectorSize, geometry().connectorSize, geometry().connectorSize)
       : new THREE.SphereGeometry(2.4, 16, 12);
-    const mat = new THREE.MeshBasicMaterial({
-      color: isOrigin ? 0x1a8cff : isDiag ? 0x8b3df5 : 0x18a558,
-      transparent: true, opacity: isOrigin ? 0.45 : 0.85,
-    });
+    const mat = this._handleMaterial(kind);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(position[0], position[1], position[2]);
     mesh.userData = Object.assign({ kind: "handle" }, userData);
@@ -1151,10 +1174,7 @@ export class SceneManager {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.computeVertexNormals();
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x1a8cff, transparent: true, opacity: 0.35,
-      side: THREE.DoubleSide, depthWrite: false,
-    });
+    const mat = this._panelHandleMaterial();
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(cx, cy, cz);
     mesh.userData = Object.assign({ kind: "handle", panelCell: true }, userData);
