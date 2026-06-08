@@ -507,6 +507,26 @@ export class SceneManager {
     return this._materials[key];
   }
 
+  // Platten (solide) und Textilien/Netze (halbtransparent) – je Katalogfarbe und
+  // Aufbau-Status gecacht. Frueher wurde pro renderModel() ein neues Material je
+  // Platte/Textil alloziert und nie freigegeben (-> GPU-Speicher-Leck), da
+  // _disposeGroup nur Geometrien disposed. transparent steckt im Key, damit eine
+  // Platte und ein Textil gleicher Farbe nicht kollidieren. "current" im
+  // Aufbau-Modus orange hervorgehoben (emissive).
+  _panelMaterial(colorId, isCurrent, transparent) {
+    const key = "panel:" + colorId + (isCurrent ? ":c" : "") + (transparent ? ":t" : "");
+    if (!this._materials[key]) {
+      this._materials[key] = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(colorHex(colorId)),
+        roughness: transparent ? 0.95 : 0.7, metalness: transparent ? 0.0 : 0.05,
+        side: THREE.DoubleSide,
+        transparent: !!transparent, opacity: transparent ? 0.5 : 1,
+        emissive: new THREE.Color(isCurrent ? 0x3a2400 : 0x000000),
+      });
+    }
+    return this._materials[key];
+  }
+
   // Verstaerkungsprofil-Stab (Bauen-Modus): dunkles Alu-Metallic.
   _rodMaterial() {
     if (!this._materials["rod"]) {
@@ -868,11 +888,7 @@ export class SceneManager {
       const zAxis = w.clone().normalize();
       const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
       const geo = new THREE.BoxGeometry(u.length(), thickness, w.length());
-      const mat = st === "future" ? this._ghostMaterial() : new THREE.MeshStandardMaterial({
-        color: new THREE.Color(colorHex(p.color)), roughness: 0.7, metalness: 0.05,
-        side: THREE.DoubleSide,
-        emissive: new THREE.Color(st === "current" ? 0x3a2400 : 0x000000),
-      });
+      const mat = st === "future" ? this._ghostMaterial() : this._panelMaterial(p.color, st === "current", false);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
       mesh.position.copy(center);
@@ -921,11 +937,7 @@ export class SceneManager {
       const zAxis = w.clone().normalize();
       const yAxis = new THREE.Vector3().crossVectors(zAxis, xAxis).normalize();
       const geo = new THREE.BoxGeometry(u.length(), 0.6, w.length());
-      const mat = st === "future" ? this._ghostMaterial() : new THREE.MeshStandardMaterial({
-        color: new THREE.Color(colorHex(tx.color)), roughness: 0.95, metalness: 0.0,
-        side: THREE.DoubleSide, transparent: true, opacity: 0.5,
-        emissive: new THREE.Color(st === "current" ? 0x3a2400 : 0x000000),
-      });
+      const mat = st === "future" ? this._ghostMaterial() : this._panelMaterial(tx.color, st === "current", true);
       const mesh = new THREE.Mesh(geo, mat);
       mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
       mesh.position.copy(center);
