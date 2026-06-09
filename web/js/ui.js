@@ -58,7 +58,7 @@ export function initUI({ scene, model, builder }) {
   applyTranslations();
   renderHelpTable();
 
-  // Sprach-Dropdown
+  // Sprach-Dropdown (direkt in toolbar-right)
   const langBtn = $("btn-lang");
   if (langBtn) {
     langBtn.value = getLang();
@@ -79,7 +79,6 @@ export function initUI({ scene, model, builder }) {
   function updateUndoButton() {
     const off = !builder.canUndo();
     $("btn-undo").disabled = off;
-    const mu = $("mobile-btn-undo"); if (mu) mu.disabled = off;
   }
 
   // --- Autosave-Anzeige --------------------------------------------------
@@ -109,26 +108,6 @@ export function initUI({ scene, model, builder }) {
     if (fileMenu && !fileMenu.contains(e.target)) toggleFileMenu(false);
   });
 
-  // --- Mehr-Menue (Kamera · Tasten · Sprache) ----------------------------
-  const moreMenu = $("more-menu");
-  function toggleMoreMenu(open) {
-    const pop = $("more-pop");
-    const show = open == null ? pop.hidden : open;
-    pop.hidden = !show;
-    $("btn-more").classList.toggle("active", show);
-  }
-  $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMoreMenu(); });
-  document.addEventListener("click", (e) => {
-    if (moreMenu && !moreMenu.contains(e.target)) toggleMoreMenu(false);
-  });
-
-  // Mobile-only Buttons im ···-Menü
-  const mbu = $("mobile-btn-undo");
-  const mbl = $("mobile-btn-labels");
-  const mbh = $("mobile-btn-hints");
-  if (mbu) mbu.addEventListener("click", () => { builder.undo(); toggleMoreMenu(false); });
-  if (mbl) mbl.addEventListener("click", () => { toggleLabels(); toggleMoreMenu(false); });
-  if (mbh) mbh.addEventListener("click", () => { toggleHints(); toggleMoreMenu(false); });
 
   // --- Modus -------------------------------------------------------------
   $("mode-add").addEventListener("click", () => setMode("add"));
@@ -368,7 +347,8 @@ export function initUI({ scene, model, builder }) {
 
   // --- Aktionen ----------------------------------------------------------
   $("btn-undo").addEventListener("click", () => builder.undo());
-  $("btn-camera").addEventListener("click", () => scene.resetCamera());
+  const camBtn = $("btn-camera");
+  if (camBtn) camBtn.addEventListener("click", () => scene.resetCamera());
   $("btn-clear").addEventListener("click", () => {
     if (!model.isEmpty() && !confirm(t("confirm_clear"))) return;
     builder.recordHistory(() => model.clear());

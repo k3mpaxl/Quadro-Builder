@@ -98,14 +98,15 @@ body {
 /* Senkrechter Trenner zwischen Toolbar-Bereichen */
 .divider { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; flex-shrink: 0; }
 
-/* Autosave-Anzeige als kleiner Statuspunkt */
+/* Autosave-Anzeige als kleiner Statuspunkt (jetzt im Entwürfe-Button) */
 .save-dot {
-  width: 11px; height: 11px; border-radius: 50%;
+  width: 9px; height: 9px; border-radius: 50%;
   background: var(--ok); border: 1px solid #cdeedd;
-  box-shadow: 0 0 0 3px #e9f7ef;
+  box-shadow: 0 0 0 2px #e9f7ef;
   flex: 0 0 auto; transition: background 0.2s ease, box-shadow 0.2s ease;
 }
-.save-dot.saving { background: var(--accent); box-shadow: 0 0 0 3px #e8f1ff; }
+.save-dot.saving { background: var(--accent); box-shadow: 0 0 0 2px #e8f1ff; }
+
 
 /* Bauteil-Leiste (Rohre + Platten gemeinsam) */
 .part-row { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; }
@@ -187,10 +188,8 @@ body {
 .btn.danger { color: var(--no); }
 .btn.danger:hover { border-color: var(--no); background: #fdeceb; }
 .menu-pop hr, .menu-section + .btn { margin-top: 2px; }
-/* Quadratische Icon-Buttons (Sidebar-Öffner, Mehr-Menü) */
+/* Quadratische Icon-Buttons */
 .btn.icon-sq { padding: 6px 8px; min-width: 32px; display: inline-flex; align-items: center; justify-content: center; }
-/* Mehr-Menü öffnet nach links (ist ganz rechts) */
-#more-menu .menu-pop { right: 0; min-width: 180px; }
 
 .btn {
   border: 1px solid var(--line);
@@ -247,6 +246,24 @@ main { flex: 1; display: flex; min-height: 0; }
 #canvas-wrap { position: relative; flex: 1; min-width: 0; }
 #canvas { position: absolute; inset: 0; touch-action: none; }
 #canvas canvas { display: block; touch-action: none; }
+
+/* Floating Canvas-Buttons (Tastenkürzel, ggf. weitere) */
+.canvas-btn {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.13);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 7px 10px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  color: var(--ink);
+  z-index: 10;
+  transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.12s ease;
+}
+.canvas-btn:hover { background: #fff; transform: scale(1.06); box-shadow: 0 4px 14px rgba(0,0,0,0.22); }
+.canvas-btn:active { transform: scale(0.94); }
+#btn-help { bottom: 12px; right: 12px; }
 
 /* Szene-Toggle-Icon: Kreis links oben im 3D-Viewport */
 .scene-icon {
@@ -424,23 +441,16 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
 
 /* Responsive — ab 768 px aufwärts gilt das volle Desktop-Layout.
    Strategie: zwei Stufen
-   ① ≤768px  — Nicht-essentielles (Undo, Namen, Hinweise) wandert ins ···-Menü
-   ② ≤480px  — ···-Popup öffnet sich volle Breite (Hamburger-Stil) */
+   ≤768px  — kompakte Darstellung
+   ≤480px  — nur Kern-Teile in der Bauteil-Leiste */
 
-/* Elemente, die nur auf kleinen Bildschirmen sichtbar sind */
-.show-mobile { display: none !important; }
-
-/* ① Ab ≤768 px: Undo + Namen + Hinweise ausblenden → landen im ···-Menü */
+/* ≤768 px: kompakter Toolbar */
 @media (max-width: 768px) {
   /* Brand: "Builder" weglassen, nur QUADRO zeigen */
   .brand span { display: none; }
 
-  /* Ausblenden im Toolbar */
+  /* Keyboard-Button + andere Desktop-only Elemente ausblenden */
   .hide-mobile { display: none !important; }
-
-  /* Einblenden im ···-Menü */
-  .show-mobile { display: flex !important; }
-  .menu-section.show-mobile { flex-direction: column; gap: 6px; }
 
   /* Toolbar: Hauptzeile kompakter */
   #toolbar-left  { padding: 5px 10px; gap: 6px; }
@@ -448,17 +458,8 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
   #toolbar-ctx   { padding: 4px 10px; }
 }
 
-/* ② Ab ≤480 px: ···-Popup volle Breite + nur Kern-Teile in der Bauteil-Leiste */
+/* ≤480 px: nur Kern-Teile in der Bauteil-Leiste */
 @media (max-width: 480px) {
-  #more-menu .menu-pop {
-    right: 0;
-    left: 0;
-    width: auto;
-    max-width: none;
-    border-radius: 0 0 10px 10px;
-    border-top: none;
-    top: 100%;
-  }
   /* Nicht-essentielle Tubes (10, 20, 25, 52 cm) und Platten (80er) ausblenden */
   .hide-narrow { display: none !important; }
 }
