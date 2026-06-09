@@ -1609,14 +1609,18 @@ export class SceneManager {
     if (!this._treeNodes) return;
     const nodes = model && model.nodes ? [...model.nodes.values()] : [];
     const CLEAR2 = 90 * 90;
-    for (const t of this._treeNodes) {
-      let close = false;
-      for (const n of nodes) {
-        const dx = t.x - n.x, dz = t.z - n.z;
-        if (dx * dx + dz * dz < CLEAR2) { close = true; break; }
+    const markBlocked = (list) => {
+      for (const t of list) {
+        let close = false;
+        for (const n of nodes) {
+          const dx = t.x - n.x, dz = t.z - n.z;
+          if (dx * dx + dz * dz < CLEAR2) { close = true; break; }
+        }
+        t.blocked = close;
       }
-      t.blocked = close;
-    }
+    };
+    markBlocked(this._treeNodes);
+    if (this._bushNodes) markBlocked(this._bushNodes);
   }
 
   // Pro Frame: Bäume + Büsche im 90°-Sektor hinter der Kamera ausblenden (270° sichtbar).
