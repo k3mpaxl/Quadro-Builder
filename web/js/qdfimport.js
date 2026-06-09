@@ -511,6 +511,9 @@ export function parseQDF(text, opts = {}) {
         panels.push({ id: "p" + seq++, nodes: [bA.id, bB.id, bC.id, bD.id], panelId, color }); // Rückwand
         panels.push({ id: "p" + seq++, nodes: [nA.id, bA.id, bD.id, nD.id], panelId: sideId, color }); // linke Seitenwand
         panels.push({ id: "p" + seq++, nodes: [nB.id, bB.id, bC.id, nC.id], panelId: sideId, color }); // rechte Seitenwand
+        // Boden: 4 untere Ecken (alle y=0); scene.js rendert darüber das Wasser-Volumen.
+        // Node-Reihenfolge: nA→nB (Breite), nA→bA (Tiefe) -> scene.js BoxGeometry passt.
+        panels.push({ id: "p" + seq++, nodes: [nA.id, nB.id, bB.id, bA.id], panelId: "pool_floor", color });
       }
     }
   }

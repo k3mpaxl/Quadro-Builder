@@ -39,7 +39,7 @@ export class SceneManager {
     this.controls.target.set(...this._defaultCam.target);
 
     // Licht: warmes Sonnenlicht + Himmelslicht + weiche Schatten
-    this._hemiLight = new THREE.HemisphereLight(0xcde7ff, 0x7a9060, 0.75);
+    this._hemiLight = new THREE.HemisphereLight(0xffffff, 0x8090a0, 1.4); // Normal-Modus-Startwert
     this.scene.add(this._hemiLight);
     this._dirLight = new THREE.DirectionalLight(0xfff8e7, 1.3);
     this._dirLight.position.set(200, 320, 150);
@@ -372,11 +372,11 @@ export class SceneManager {
     const span = P0.distanceTo(P3) || 1;
     const C2 = P3.clone().addScaledVector(exitDir, -span * 0.45);
     const bez = (t) => {
-      const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, e = t * t * t;
+      const u = 1 - t;
       return new THREE.Vector3(
-        a * P0.x + b * C1.x + c * C2.x + e * P3.x,
-        a * P0.y + b * C1.y + c * C2.y + e * P3.y,
-        a * P0.z + b * C1.z + c * C2.z + e * P3.z);
+        u * u * P0.x + 2 * u * t * C1.x + t * t * P3.x,
+        u * u * P0.y + 2 * u * t * C1.y + t * t * P3.y,
+        u * u * P0.z + 2 * u * t * C1.z + t * t * P3.z);
     };
     // Bananenfoermiger, durchgehend gebogener Rinnenkoerper entlang der Bézier.
     this._addSlideAlongCurve(mat, st, sl.id, bez, 16);
@@ -545,6 +545,19 @@ export class SceneManager {
       });
     }
     return this._materials[key];
+  }
+
+  // Bällebad-Wasser: semitransparentes Blau (wird über pool_floor-Panel gerendert).
+  _waterMaterial() {
+    if (!this._materials["water"]) {
+      this._materials["water"] = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(0x2879d0),
+        roughness: 0.05, metalness: 0.1,
+        transparent: true, opacity: 0.58,
+        side: THREE.FrontSide,
+      });
+    }
+    return this._materials["water"];
   }
 
   // Verstaerkungsprofil-Stab (Bauen-Modus): dunkles Alu-Metallic.
@@ -943,6 +956,18 @@ export class SceneManager {
       mesh.userData = { kind: "panel", id: p.id };
       this.buildGroup.add(mesh);
       if (st !== "future") this.pickPanels.push(mesh);
+
+      // Bällebad-Boden: Wasser-Volumen (75 % Füllhöhe) über dem Boden rendern.
+      if (p.panelId === "pool_floor" && st !== "future") {
+        const wallH = 40;                   // Wandhöhe pool2 in cm
+        const waterH = wallH * 0.75;        // 30 cm Wasserstand
+        const wGeo = new THREE.BoxGeometry(u.length(), waterH, w.length());
+        const wMesh = new THREE.Mesh(wGeo, this._waterMaterial());
+        // Mitte des Wassers: Boden-Deckfläche + waterH/2  (kein Z-Fighting mit Bodenplatte)
+        wMesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis));
+        wMesh.position.copy(center).addScaledVector(yAxis, thickness / 2 + waterH / 2);
+        this.buildGroup.add(wMesh);
+      }
     }
 
     // Doppelrohrverbinder: "8" = zwei Ringe nebeneinander, durch jeden laeuft
@@ -1001,7 +1026,7 @@ export class SceneManager {
       const st = stateOf(sl.id);
       const mat = st === "future" ? this._ghostMaterial() : this._slideMatFor(sl.kind, st === "current");
 
-      // Beschriftung: Name des Rutschenteils/Dachs wenn Labels aktiv.
+      // Beschriftung: Name des Rutschenenteils/Dachs wenn Labels aktiv.
       if (slideNameFor && st !== "future") {
         const name = slideNameFor(sl);
         if (name) {
@@ -1527,6 +1552,45 @@ export class SceneManager {
 
     this.scene.add(group);
     this._treeGroup = group;
+
+    this._buildBushes();
+  }
+
+  _buildBushes() {
+    const bushGeo = new THREE.SphereGeometry(30, 8, 6);
+    const bushMat = new THREE.MeshLambertMaterial({ color: 0x2d5a27 });
+
+    const group = new THREE.Group();
+    this._bushNodes = [];
+
+    let seed = 138;
+    const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+
+    for (let i = 0; i < 40; i++) {
+      const r = 450 + rng() * 450;          // 450–900 cm vom Mittelpunkt
+      const θ = rng() * Math.PI * 2;
+      const tx = Math.cos(θ) * r, tz = Math.sin(θ) * r;
+      if (Math.abs(tx) > 790 || Math.abs(tz) > 790) continue;
+
+      const sc = 0.5 + rng() * 0.5;
+      const ox = (rng() - 0.5) * 40, oz = (rng() - 0.5) * 40;
+
+      const tg = new THREE.Group();
+      tg.position.set(tx, 0, tz);
+      tg.scale.setScalar(sc);
+      tg.rotation.y = rng() * Math.PI * 2;
+
+      const bush = new THREE.Mesh(bushGeo, bushMat);
+      bush.position.y = 15; // Höhe ca. 30cm
+      bush.castShadow = true;
+      tg.add(bush);
+
+      group.add(tg);
+      this._bushNodes.push({ group: tg, x: tx, z: tz });
+    }
+
+    this.scene.add(group);
+    this._bushGroup = group;
   }
 
   // Bäume ausblenden, die zu nah an einem Modellknoten stehen.
@@ -1546,23 +1610,29 @@ export class SceneManager {
     }
   }
 
-  // Pro Frame: Bäume im 90°-Sektor hinter der Kamera ausblenden (270° sichtbar).
-  // Kombiniert mit t.blocked (Abstand zum Gerüst) und treeGroup.visible (Szene).
+  // Pro Frame: Bäume + Büsche im 90°-Sektor hinter der Kamera ausblenden (270° sichtbar).
+  // Kombiniert mit t.blocked (Abstand zum Gerüst) und treeGroup/bushGroup.visible (Szene).
   _updateTreeCamera() {
-    if (!this._treeNodes || !this._treeGroup || !this._treeGroup.visible) return;
     const tx = this.controls.target.x, tz = this.controls.target.z;
     const cx = this.camera.position.x - tx, cz = this.camera.position.z - tz;
     const cl = Math.hypot(cx, cz);
-    if (cl < 1) return; // Kamera exakt über Ziel → kein Sektor definierbar
-    const cnx = cx / cl, cnz = cz / cl; // normierter Vektor Ziel→Kamera
-    for (const t of this._treeNodes) {
-      if (t.blocked) { t.group.visible = false; continue; }
-      const dx = t.x - tx, dz = t.z - tz;
-      const dl = Math.hypot(dx, dz);
-      if (dl < 1) { t.group.visible = true; continue; }
-      // dot > cos(45°)=0.707 → Baum liegt im 90°-Kamera-Sektor → ausblenden.
-      t.group.visible = (dx / dl) * cnx + (dz / dl) * cnz < 0.707;
-    }
+
+    const updateNodes = (nodes, groupVisible) => {
+      if (!nodes || !groupVisible) return;
+      if (cl < 1) { nodes.forEach(t => { if (!t.blocked) t.group.visible = true; }); return; }
+      const cnx = cx / cl, cnz = cz / cl;
+      for (const t of nodes) {
+        if (t.blocked) { t.group.visible = false; continue; }
+        const dx = t.x - tx, dz = t.z - tz;
+        const dl = Math.hypot(dx, dz);
+        if (dl < 1) { t.group.visible = true; continue; }
+        // dot > cos(45°)=0.707 → Objekt im 90°-Kamera-Sektor → ausblenden.
+        t.group.visible = (dx / dl) * cnx + (dz / dl) * cnz < 0.707;
+      }
+    };
+
+    updateNodes(this._treeNodes, this._treeGroup?.visible);
+    updateNodes(this._bushNodes, this._bushGroup?.visible);
   }
 
   // Szene komplett ein-/ausblenden (Gras, Bäume, Himmel, Licht, Schatten).
@@ -1572,14 +1642,16 @@ export class SceneManager {
     if (this._grassEnv)  this._grassEnv.visible  = v;
     if (this._skyMesh)   this._skyMesh.visible    = v;
     if (this._treeGroup) this._treeGroup.visible  = v;
+    if (this._bushGroup) this._bushGroup.visible  = v; // Büsche: nur im Szene-Modus
     // Direktionales Licht + Schatten ein-/ausschalten.
     if (this._dirLight) {
       this._dirLight.visible    = v;
       this._dirLight.castShadow = v;
+      this._dirLight.intensity  = 1.9; // Szene-Modus: helles Sonnenlicht
     }
     // Hemisphärenlicht: im Builder-Modus neutral weiß, im Szene-Modus warm.
     if (this._hemiLight) {
-      this._hemiLight.intensity = v ? 0.75 : 1.0;
+      this._hemiLight.intensity = v ? 1.1 : 1.4;   // Szene heller, Normal leicht aufgehellt
       this._hemiLight.color.set(v ? 0xcde7ff : 0xffffff);
       this._hemiLight.groundColor.set(v ? 0x7a9060 : 0x8090a0);
     }
