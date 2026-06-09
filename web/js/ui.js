@@ -107,6 +107,19 @@ export function initUI({ scene, model, builder }) {
     if (fileMenu && !fileMenu.contains(e.target)) toggleFileMenu(false);
   });
 
+  // --- Mehr-Menue (Kamera · Tasten · Sprache) ----------------------------
+  const moreMenu = $("more-menu");
+  function toggleMoreMenu(open) {
+    const pop = $("more-pop");
+    const show = open == null ? pop.hidden : open;
+    pop.hidden = !show;
+    $("btn-more").classList.toggle("active", show);
+  }
+  $("btn-more").addEventListener("click", (e) => { e.stopPropagation(); toggleMoreMenu(); });
+  document.addEventListener("click", (e) => {
+    if (moreMenu && !moreMenu.contains(e.target)) toggleMoreMenu(false);
+  });
+
   // --- Modus -------------------------------------------------------------
   $("mode-add").addEventListener("click", () => setMode("add"));
   $("mode-clamp").addEventListener("click", () => setMode("clamp"));
@@ -152,10 +165,16 @@ export function initUI({ scene, model, builder }) {
     $("mode-delete").classList.toggle("active", m === "delete");
     $("mode-reinforce").classList.toggle("active", m === "reinforce");
     $("mode-assembly").classList.toggle("active", m === "assembly");
-    $("grp-build").hidden = m === "assembly" || m === "reinforce" || m === "clamp";
+    $("toolbar-ctx").hidden = m === "assembly" || m === "reinforce" || m === "clamp";
     // Aufbau-Modus zeigt das Aufbau-Panel; beim Verlassen zurück zum zuletzt
     // gewählten Panel (oder zu). Andere Modi lassen das Panel unberührt.
-    if (m === "assembly") showSidebarPanel("assembly");
+    if (m === "assembly") {
+      // Szene beim Wechsel in den Aufbau-Modus ausblenden.
+      scene.setScene(false);
+      grassOn = false;
+      $("scene-toggle").classList.add("off");
+      showSidebarPanel("assembly");
+    }
     else if (currentPanel === "assembly")
       showSidebarPanel(localStorage.getItem(SIDEBAR_PANEL_KEY) || null);
     $("btn-labels").classList.toggle("active", builder.showLabels);
@@ -356,6 +375,17 @@ export function initUI({ scene, model, builder }) {
 
   $("toggle-bom").addEventListener("click", () => toggleSidebarPanel("bom"));
   $("toggle-inventory").addEventListener("click", () => toggleSidebarPanel("inventory"));
+
+  // Szene ein-/ausblenden via Canvas-Icon (Standard: aus).
+  let grassOn = false;
+  const sceneIcon = $("scene-toggle");
+  const applyScene = (on) => {
+    grassOn = on;
+    scene.setScene(on);
+    sceneIcon.classList.toggle("off", !on);
+  };
+  sceneIcon.addEventListener("click", () => applyScene(!grassOn));
+  applyScene(false); // Startzustand: Szene aus
 
   // Startzustand: zuletzt gewähltes Panel (Standard: zu)
   showSidebarPanel(localStorage.getItem(SIDEBAR_PANEL_KEY) || null);

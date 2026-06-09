@@ -27,25 +27,70 @@ body {
 .btn, .swatch, .lang-select, select, label { touch-action: manipulation; }
 #toolbar, .group, .seg, .menu-pop { -webkit-user-select: none; user-select: none; }
 
-/* Toolbar */
+/* Toolbar — zweizeilig */
 #toolbar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 8px 14px;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
   z-index: 10;
 }
+
+/* Hauptzeile: scrollbarer linker Teil + fixierter rechter Teil */
+#toolbar-main { display: flex; align-items: stretch; }
+
+#toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#toolbar-left::-webkit-scrollbar { display: none; }
+
+#toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+}
+
+/* Kontextzeile: Bauteil-Auswahl + Farbe */
+#toolbar-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border-top: 1px solid var(--line);
+  background: #f7f9fc;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#toolbar-ctx::-webkit-scrollbar { display: none; }
+/* Kein Umbruch in der Kontextzeile — lieber horizontal scrollen */
+#toolbar-ctx .part-row { flex-wrap: nowrap; }
+#toolbar-ctx .group,
+#toolbar-ctx #grp-build { flex-shrink: 0; }
+
 .brand { font-weight: 800; letter-spacing: 0.5px; font-size: 18px; white-space: nowrap; }
 .brand span { color: var(--accent); font-weight: 700; }
 .group { display: flex; align-items: center; gap: 6px; }
-.group > label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.group > label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
 
 /* Senkrechter Trenner zwischen Toolbar-Bereichen */
-.divider { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; }
+.divider { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; flex-shrink: 0; }
 
 /* Autosave-Anzeige als kleiner Statuspunkt */
 .save-dot {
@@ -80,18 +125,27 @@ body {
   position: absolute; right: 0; top: calc(100% + 6px);
   background: #fff; border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
-  padding: 10px; width: 250px; z-index: 30;
+  padding: 10px; width: 260px;
+  max-width: min(260px, calc(100vw - 28px));
+  z-index: 100;
   display: flex; flex-direction: column; gap: 8px;
 }
 .menu-section { display: flex; flex-direction: column; gap: 6px; }
 .menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
 .menu-row { display: flex; gap: 6px; align-items: center; }
 .menu-row select { flex: 1; max-width: none; }
+.menu-row .menu-label { white-space: nowrap; }
+.menu-sep { border: none; border-top: 1px solid var(--line); margin: 2px 0; }
 .btn.full { width: 100%; justify-content: center; }
 .menu-row .btn.full { flex: 1; }
+.menu-item { text-align: left; justify-content: flex-start; }
 .btn.danger { color: var(--no); }
 .btn.danger:hover { border-color: var(--no); background: #fdeceb; }
 .menu-pop hr, .menu-section + .btn { margin-top: 2px; }
+/* Quadratische Icon-Buttons (Sidebar-Öffner, Mehr-Menü) */
+.btn.icon-sq { padding: 6px 8px; min-width: 32px; display: inline-flex; align-items: center; justify-content: center; }
+/* Mehr-Menü öffnet nach links (ist ganz rechts) */
+#more-menu .menu-pop { right: 0; min-width: 180px; }
 
 .btn {
   border: 1px solid var(--line);
@@ -148,6 +202,20 @@ main { flex: 1; display: flex; min-height: 0; }
 #canvas-wrap { position: relative; flex: 1; min-width: 0; }
 #canvas { position: absolute; inset: 0; touch-action: none; }
 #canvas canvas { display: block; touch-action: none; }
+
+/* Szene-Toggle-Icon: Kreis links oben im 3D-Viewport */
+.scene-icon {
+  position: absolute; top: 12px; left: 12px; z-index: 10;
+  width: 48px; height: 48px; padding: 0; border: none;
+  border-radius: 50%; overflow: hidden; cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.30);
+  transition: filter 0.25s, opacity 0.25s, box-shadow 0.2s, transform 0.1s;
+  outline: 2px solid rgba(255,255,255,0.55);
+  outline-offset: 1px;
+}
+.scene-icon:hover { transform: scale(1.08); box-shadow: 0 4px 14px rgba(0,0,0,0.35); }
+.scene-icon:active { transform: scale(0.96); }
+.scene-icon.off { filter: grayscale(1); opacity: 0.45; outline-color: rgba(0,0,0,0.15); }
 body.resizing { cursor: col-resize; user-select: none; }
 
 /* Ziehgriff zwischen Canvas und Seitenleiste */
@@ -266,7 +334,6 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
 /* Button-Reihen (Rohr-/Platten-Auswahl) */
 .btn-row { display: flex; gap: 4px; flex-wrap: wrap; }
 .btn.small { padding: 6px 9px; font-size: 13px; min-width: 34px; font-variant-numeric: tabular-nums; }
-.push-right { margin-left: auto; }
 
 /* Hilfe-Overlay */
 .help-overlay {

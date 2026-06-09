@@ -69,8 +69,9 @@ export class Builder {
   setMode(mode) {
     this.mode = mode;
     if (mode === "delete") this.selectedNodeId = null;
-    // Labels (Namen) gehoeren in den Bau-Modus -> beim Verlassen abschalten.
-    if (mode !== "add" && mode !== "panel") this.showLabels = false;
+    // Labels beim Moduswechsel grundsaetzlich ausschalten;
+    // der Aufbaumodus schaltet sie in enterAssembly() selbst wieder ein.
+    this.showLabels = false;
     if (mode === "assembly") this.enterAssembly(); // Aufbau zeigt wieder eigene Labels
     this.refresh();
   }
@@ -216,10 +217,15 @@ export class Builder {
     const assembly = this.mode === "assembly" && this.buildPlan.steps.length
       ? this._assemblyVisibility() : null;
     const labelFor = this.showLabels ? (node) => connectorLabelInfo(this.model, node) : null;
+    const SLIDE_LABELS = {
+      "slide2": "Rutsche", "slide-new2": "Rutsche",
+      "slide-end2": "Rutschen-Endstück", "curved-slide2": "Bogenrutsche", "roof2": "Dach",
+    };
+    const slideNameFor = this.showLabels ? (sl) => SLIDE_LABELS[sl.kind] || null : null;
     const suggest = (this.showHints || this.mode === "reinforce")
       ? this.model.reinforcementSuggestions() : null;
     const reinforce = this.mode === "reinforce";
-    this.scene.renderModel(this.model, this.selectedNodeId, { labelFor, assembly, suggest, reinforce });
+    this.scene.renderModel(this.model, this.selectedNodeId, { labelFor, slideNameFor, assembly, suggest, reinforce });
     this._buildHandles();
     this.onChange();
   }
@@ -561,6 +567,15 @@ export class Builder {
   }
 
   _clickPanel(e) {
+    // Bestehende Platte/Netz anklicken → Farbe ändern (wie bei Rohren).
+    const pick = this.scene.pickBuild(e.clientX, e.clientY);
+    if (pick && (pick.data.kind === "panel" || pick.data.kind === "textile")) {
+      let changed;
+      this.recordHistory(() => { changed = this.model.setColorOf(pick.data.kind, pick.data.id, this.color); });
+      if (changed) { this.onNotice("Farbe geändert."); this.refresh(); }
+      return;
+    }
+    // Neues Platten-Handle → Platte hinzufügen.
     const h = this.scene.pickHandle(e.clientX, e.clientY);
     if (h && h.data.panelCell) {
       this.recordHistory(() => this.model.addPanel(h.data.rectNodes, this.panelId, this.color));

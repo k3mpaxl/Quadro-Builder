@@ -20,6 +20,8 @@ export class SceneManager {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio || 1);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
@@ -36,16 +38,34 @@ export class SceneManager {
     this.controls.dampingFactor = 0.08;
     this.controls.target.set(...this._defaultCam.target);
 
-    // Licht
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8090a0, 1.0));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.7);
-    dir.position.set(120, 200, 80);
-    this.scene.add(dir);
+    // Licht: warmes Sonnenlicht + Himmelslicht + weiche Schatten
+    this._hemiLight = new THREE.HemisphereLight(0xcde7ff, 0x7a9060, 0.75);
+    this.scene.add(this._hemiLight);
+    this._dirLight = new THREE.DirectionalLight(0xfff8e7, 1.3);
+    this._dirLight.position.set(200, 320, 150);
+    this._dirLight.castShadow = true;
+    this._dirLight.shadow.mapSize.width  = 2048;
+    this._dirLight.shadow.mapSize.height = 2048;
+    this._dirLight.shadow.camera.left   = -480;
+    this._dirLight.shadow.camera.right  =  480;
+    this._dirLight.shadow.camera.top    =  480;
+    this._dirLight.shadow.camera.bottom = -480;
+    this._dirLight.shadow.camera.near   =   1;
+    this._dirLight.shadow.camera.far    =  800;
+    this._dirLight.shadow.bias          = -0.0005;
+    this._dirLight.shadow.radius        =   3;
+    this.scene.add(this._dirLight);
 
     // Boden-Raster (20 cm Zellen)
     const grid = new THREE.GridHelper(800, 40, 0xb8c0cc, 0xd6dce4);
     grid.position.y = 0;
     this.scene.add(grid);
+    this._grid = grid;
+
+    // Prozedurales Gras + gruener Boden (umschaltbar via setScene()).
+    this._buildGrass();
+    this._buildSky();
+    this._buildTrees();
 
     // Gruppen
     this.buildGroup = new THREE.Group();
@@ -679,6 +699,7 @@ export class SceneManager {
 
   // Baut die Szene aus dem Modell neu auf.
   // opts.labelFor(node) -> string|null  : Beschriftung an der Kupplung.
+  // opts.slideNameFor(slide) -> string|null : Beschriftung an der Rutsche/Dach.
   // opts.assembly { done:Set, current:Set } : Aufbaumodus (fertig/aktuell/kuenftig).
   renderModel(model, selectedNodeId, opts = {}) {
     this._disposeGroup(this.buildGroup);
@@ -694,6 +715,7 @@ export class SceneManager {
     const armRadius = geometry().armRadius; // C45-Arm: ~42 mm, duenner als das Rohr
     const asm = opts.assembly || null;
     const labelFor = opts.labelFor || null;
+    const slideNameFor = opts.slideNameFor || null;
     const suggest = opts.suggest || null;
     const reinforce = opts.reinforce || false;
     const cs = geometry().connectorSize;
@@ -978,6 +1000,18 @@ export class SceneManager {
       if (reinforce) continue;
       const st = stateOf(sl.id);
       const mat = st === "future" ? this._ghostMaterial() : this._slideMatFor(sl.kind, st === "current");
+
+      // Beschriftung: Name des Rutschenteils/Dachs wenn Labels aktiv.
+      if (slideNameFor && st !== "future") {
+        const name = slideNameFor(sl);
+        if (name) {
+          const sprite = this._makeLabelSprite(name, st === "current", null);
+          sprite.position.set(sl.x, sl.y + 30, sl.z);
+          this.labelGroup.add(sprite);
+          this.labelMeshes.push(sprite);
+        }
+      }
+
       // Bogenrutsche: gekrümmte 90°-Form oben, fuehrt nach unten ins Folgeteil.
       if (sl.kind === "curved-slide2") { this._addCurvedSlide(sl, model, mat, st); continue; }
       // Gerade Rutsche: schraege Rampe von ihrer Position zum naechsten Folgeteil.
@@ -988,6 +1022,19 @@ export class SceneManager {
       // Dachschraegen hoch, 90°-Knick am First, andere Schraege runter).
       if (sl.kind === "roof2") { this._addRoof(sl, model, mat, st); continue; }
     }
+
+    // Gras unter bodennahen Bauteilen ausblenden (Footprint-Maske).
+    this._updateGrassMask(model);
+
+    // Schatten: alle Bauteile werfen und empfangen Schatten.
+    this.buildGroup.traverse(child => {
+      if (!child.isMesh) return;
+      child.castShadow    = true;
+      child.receiveShadow = true;
+    });
+
+    // Bäume: bei Bedarf ausblenden wenn zu nah an Knoten.
+    this._updateTrees(model);
   }
 
   // Gerade Rutsche (slide2/slide-new2): schraege Rampe (Rutschflaeche + 2 erhoehte
@@ -1248,9 +1295,302 @@ export class SceneManager {
     }
   }
 
+  // --- Prozedurales Gras (Instanced + Wind-Shader, keine Asset-Datei) --------
+  // Ein konisch zulaufendes Grashalm-Mesh wird via InstancedMesh tausendfach
+  // gestreut; ein Vertex-Shader biegt jeden Halm windabhaengig (Hoehe², Zeit,
+  // Position, Zufallsphase). Darunter eine gruene Bodenflaeche. Alles statisch
+  // in der Szene (NICHT in buildGroup, wird also nicht pro Render neu gebaut).
+  // Prozedurale Gras-Textur: Canvas mit zufälligen Halm-Strichen aus der
+  // Vogelperspektive → kein 3D-Geometry-Aufwand, kein Asset.
+  _makeGrassTexture() {
+    const S = 256;
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = S;
+    const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#3d6620";
+    ctx.fillRect(0, 0, S, S);
+    const tones = ["#4d8228", "#3d6620", "#5c9430", "#466e24", "#52882e", "#3a5e1c"];
+    for (let i = 0; i < 4000; i++) {
+      const x = Math.random() * S, y = Math.random() * S;
+      const len = 2 + Math.random() * 7;
+      const a = Math.random() * Math.PI;
+      ctx.strokeStyle = tones[Math.floor(Math.random() * tones.length)];
+      ctx.lineWidth = 0.7 + Math.random() * 1.1;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+      ctx.stroke();
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(64, 64);   // 1600 cm / 64 ≈ 25 cm pro Kachel
+    return tex;
+  }
+
+  // Grasfläche als texturierter Boden (keine 3D-Halme). Empfängt Schatten der
+  // Bauteile; Cull-Maske ist inaktiv wenn _grassMesh null ist.
+  _buildGrass(opts = {}) {
+    const area = opts.area || 1600;
+    const env = new THREE.Group();
+    env.name = "grass-env";
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(area, area),
+      new THREE.MeshLambertMaterial({ map: this._makeGrassTexture() })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.4;
+    ground.receiveShadow = true;
+    env.add(ground);
+
+    this.scene.add(env);
+    this._grassEnv  = env;
+    this._grassMesh = null;   // keine Halm-Instanzen → _updateGrassMask ist no-op
+    this._grassXZ   = null;
+    this._grassCull = null;
+    this._grassMat  = null;
+    this._grassArea = area;
+    this._grassClearH = 32;
+  }
+
+  // Halme dort ausblenden, wo bodennahe Bauteile (y <= _grassClearH) stehen.
+  // Pro renderModel() neu: grobes XZ-Belegungsraster (Uint8) aus Rohren/Knoten/
+  // Platten/Rutschen, dann je Halm aCull=1, wenn seine Rasterzelle belegt ist.
+  _updateGrassMask(model) {
+    if (!this._grassMesh || !this._grassXZ || !model) return;
+    const area = this._grassArea, half = area / 2, H = this._grassClearH;
+    const CELL = 4;                          // cm pro Rasterzelle
+    const N = Math.ceil(area / CELL);
+    const occ = new Uint8Array(N * N);
+    const g = geometry();
+    const tubeR = g.tubeRadius + 3;
+    const nodeR = Math.max(g.connectorSize / 2, g.tubeRadius) + 3;
+
+    const markDisc = (x, z, r) => {
+      const r2 = r * r;
+      let cx0 = Math.floor((x - r + half) / CELL), cx1 = Math.floor((x + r + half) / CELL);
+      let cz0 = Math.floor((z - r + half) / CELL), cz1 = Math.floor((z + r + half) / CELL);
+      if (cx0 < 0) cx0 = 0; if (cz0 < 0) cz0 = 0;
+      if (cx1 >= N) cx1 = N - 1; if (cz1 >= N) cz1 = N - 1;
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const dz = (cz + 0.5) * CELL - half - z;
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const dx = (cx + 0.5) * CELL - half - x;
+          if (dx * dx + dz * dz <= r2) occ[cz * N + cx] = 1;
+        }
+      }
+    };
+    // Rohr: 3D-Strecke abtasten, nur wo y <= H markieren (Bodenrohr -> ganze
+    // Strecke; Stuetze -> nur der Fuss; erhoehtes Rohr -> nichts).
+    const markTube = (a, b, r) => {
+      const len = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+      const steps = Math.max(1, Math.ceil(len / (CELL * 0.5)));
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        if (a.y + (b.y - a.y) * t > H) continue;
+        markDisc(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, r);
+      }
+    };
+
+    for (const tb of model.tubes.values()) {
+      const a = model.nodes.get(tb.a), b = model.nodes.get(tb.b);
+      if (!a || !b || Math.min(a.y, b.y) > H) continue;
+      markTube(a, b, tubeR);
+    }
+    for (const n of model.nodes.values()) {
+      if (n.y <= H) markDisc(n.x, n.z, nodeR);
+    }
+    // Platten/Netze: nur waagerechte Bodenplatten flaechig (Wandplatten decken
+    // ihre Rahmen-Rohre/Knoten schon ab).
+    const fillPanels = (coll) => {
+      if (!coll) return;
+      for (const p of coll.values()) {
+        const ns = p.nodes.map((id) => model.nodes.get(id)).filter(Boolean);
+        if (ns.length < 3) continue;
+        let minY = Infinity, maxY = -Infinity;
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (const v of ns) {
+          if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
+          if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+          if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z;
+        }
+        if (minY > H || maxY - minY > 8) continue; // nicht bodennah / nicht flach
+        for (let z = minZ; z <= maxZ; z += CELL)
+          for (let x = minX; x <= maxX; x += CELL) markDisc(x, z, CELL);
+      }
+    };
+    fillPanels(model.panels);
+    fillPanels(model.textiles);
+    // Rutschen: tatsächliche Mesh-Positionen aus buildGroup verwenden (QDF-
+    // Koordinaten stimmen nicht mit den gerenderten Positionen überein, da Bézier-
+    // Versatz + _slideEndConnectPoint das Endstück verschiebt).
+    this.buildGroup.traverse(child => {
+      if (!child.isMesh || child.userData.kind !== "slide") return;
+      const wy = child.position.y;
+      if (wy > H) return;
+      markDisc(child.position.x, child.position.z, 25);
+    });
+
+    // Je Halm: Rasterzelle belegt -> wegcullen.
+    const xz = this._grassXZ, arr = this._grassCull.array, m = arr.length;
+    for (let i = 0; i < m; i++) {
+      const cx = Math.floor((xz[i * 2] + half) / CELL);
+      const cz = Math.floor((xz[i * 2 + 1] + half) / CELL);
+      arr[i] = (cx >= 0 && cx < N && cz >= 0 && cz < N && occ[cz * N + cx]) ? 1 : 0;
+    }
+    this._grassCull.needsUpdate = true;
+  }
+
+  // Gradient-Himmel: große Kugel (BackSide) mit GLSL-Verlauf Horizont → Zenit.
+  _buildSky() {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: `
+        varying float vY;
+        void main() {
+          vY = normalize(position).y;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        uniform vec3 uHorizon;
+        uniform vec3 uZenith;
+        varying float vY;
+        void main() {
+          float t = clamp(vY * 2.5 + 0.10, 0.0, 1.0);
+          gl_FragColor = vec4(mix(uHorizon, uZenith, t * t), 1.0);
+        }`,
+      uniforms: {
+        uHorizon: { value: new THREE.Color(0xc9dff2) },
+        uZenith:  { value: new THREE.Color(0x3a7bbb) },
+      },
+      side: THREE.BackSide,
+      depthWrite: false,
+      depthTest:  false,
+    });
+    this._skyMesh = new THREE.Mesh(new THREE.SphereGeometry(4800, 16, 10), mat);
+    this._skyMesh.renderOrder = -1;
+    this.scene.add(this._skyMesh);
+    // Hintergrundfarbe auf Horizont setzen (kein sichtbarer Naht bei Abweichung).
+    this.scene.background.set(0xc9dff2);
+  }
+
+  // Prozedurale Bäume am Rand der Grasfläche (r 320–440 cm).
+  // Geometrien und Materialien werden einmalig geteilt; per-Baum nur Transform.
+  _buildTrees() {
+    const trunkMat  = new THREE.MeshLambertMaterial({ color: 0x6b5a3e }); // graubraun (Obstbaumrinde)
+    const crownMatA = new THREE.MeshLambertMaterial({ color: 0x4a8022 }); // frisches Grün
+    const crownMatB = new THREE.MeshLambertMaterial({ color: 0x5a9428 });
+    const crownMatC = new THREE.MeshLambertMaterial({ color: 0x3d7018 });
+    // Obstbäume (Apfel/Birne/Pflaume): 250–350 cm hoch, kurzer dicker Stamm,
+    // breite runde Krone — typisch für Hausgarten.
+    const trunkGeo  = new THREE.CylinderGeometry(8, 13, 100, 7);
+    const crownGeoA = new THREE.SphereGeometry(120, 8, 6);
+    const crownGeoB = new THREE.SphereGeometry(100, 7, 5);
+    const crownGeoC = new THREE.SphereGeometry(85,  7, 5);
+
+    const group = new THREE.Group();
+    this._treeNodes = [];
+
+    // Deterministischer LCG-RNG (reproduzierbare Positionen je Session).
+    let seed = 137;
+    const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+
+    for (let i = 0; i < 60; i++) {
+      const r = 450 + rng() * 250;          // 450–700 cm vom Mittelpunkt
+      const θ = rng() * Math.PI * 2;
+      const tx = Math.cos(θ) * r, tz = Math.sin(θ) * r;
+      if (Math.abs(tx) > 790 || Math.abs(tz) > 790) continue; // außerhalb der Fläche
+
+      const sc = 0.65 + rng() * 0.75;       // Skalierung 0.65–1.4
+      const ox2 = (rng() - 0.5) * 60, oz2 = (rng() - 0.5) * 60;
+      const ox3 = (rng() - 0.5) * 50, oz3 = (rng() - 0.5) * 50;
+
+      const tg = new THREE.Group();
+      tg.position.set(tx, 0, tz);
+      tg.scale.setScalar(sc);
+      tg.rotation.y = rng() * Math.PI * 2;
+
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.y = 50; trunk.castShadow = true; tg.add(trunk);  // kurzer Stamm (100/2)
+
+      const c1 = new THREE.Mesh(crownGeoA, crownMatA);
+      c1.position.set(0, 175, 0); c1.castShadow = true; tg.add(c1);  // breite Hauptkrone
+
+      const c2 = new THREE.Mesh(crownGeoB, crownMatB);
+      c2.position.set(ox2, 210, oz2); c2.castShadow = true; tg.add(c2);
+
+      const c3 = new THREE.Mesh(crownGeoC, crownMatC);
+      c3.position.set(ox3, 195, oz3); c3.castShadow = true; tg.add(c3);
+
+      group.add(tg);
+      this._treeNodes.push({ group: tg, x: tx, z: tz });
+    }
+
+    this.scene.add(group);
+    this._treeGroup = group;
+  }
+
+  // Bäume ausblenden, die zu nah an einem Modellknoten stehen.
+  // Prüft Abstand zu Modellknoten und setzt t.blocked. Die tatsächliche
+  // Sichtbarkeit wird pro Frame von _updateTreeCamera() kombiniert.
+  _updateTrees(model) {
+    if (!this._treeNodes) return;
+    const nodes = model && model.nodes ? [...model.nodes.values()] : [];
+    const CLEAR2 = 90 * 90;
+    for (const t of this._treeNodes) {
+      let close = false;
+      for (const n of nodes) {
+        const dx = t.x - n.x, dz = t.z - n.z;
+        if (dx * dx + dz * dz < CLEAR2) { close = true; break; }
+      }
+      t.blocked = close;
+    }
+  }
+
+  // Pro Frame: Bäume im 90°-Sektor hinter der Kamera ausblenden (270° sichtbar).
+  // Kombiniert mit t.blocked (Abstand zum Gerüst) und treeGroup.visible (Szene).
+  _updateTreeCamera() {
+    if (!this._treeNodes || !this._treeGroup || !this._treeGroup.visible) return;
+    const tx = this.controls.target.x, tz = this.controls.target.z;
+    const cx = this.camera.position.x - tx, cz = this.camera.position.z - tz;
+    const cl = Math.hypot(cx, cz);
+    if (cl < 1) return; // Kamera exakt über Ziel → kein Sektor definierbar
+    const cnx = cx / cl, cnz = cz / cl; // normierter Vektor Ziel→Kamera
+    for (const t of this._treeNodes) {
+      if (t.blocked) { t.group.visible = false; continue; }
+      const dx = t.x - tx, dz = t.z - tz;
+      const dl = Math.hypot(dx, dz);
+      if (dl < 1) { t.group.visible = true; continue; }
+      // dot > cos(45°)=0.707 → Baum liegt im 90°-Kamera-Sektor → ausblenden.
+      t.group.visible = (dx / dl) * cnx + (dz / dl) * cnz < 0.707;
+    }
+  }
+
+  // Szene komplett ein-/ausblenden (Gras, Bäume, Himmel, Licht, Schatten).
+  // Ersetzt setGrass(); wird weiterhin von ui.js als scene.setScene(on) aufgerufen.
+  setScene(on) {
+    const v = !!on;
+    if (this._grassEnv)  this._grassEnv.visible  = v;
+    if (this._skyMesh)   this._skyMesh.visible    = v;
+    if (this._treeGroup) this._treeGroup.visible  = v;
+    // Direktionales Licht + Schatten ein-/ausschalten.
+    if (this._dirLight) {
+      this._dirLight.visible    = v;
+      this._dirLight.castShadow = v;
+    }
+    // Hemisphärenlicht: im Builder-Modus neutral weiß, im Szene-Modus warm.
+    if (this._hemiLight) {
+      this._hemiLight.intensity = v ? 0.75 : 1.0;
+      this._hemiLight.color.set(v ? 0xcde7ff : 0xffffff);
+      this._hemiLight.groundColor.set(v ? 0x7a9060 : 0x8090a0);
+    }
+    // Hintergrundfarbe: Horizont-Blau wenn Szene an, neutrales Grau sonst.
+    if (this.scene.background) this.scene.background.set(v ? 0xc9dff2 : 0xeef1f5);
+  }
+
   _animate() {
     requestAnimationFrame(this._animate);
     this.controls.update();
+    this._updateTreeCamera();
     this.renderer.render(this.scene, this.camera);
   }
 }

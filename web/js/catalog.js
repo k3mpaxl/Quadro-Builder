@@ -64,6 +64,13 @@ export function reinforcementPart() {
   return reinforcements()[0] || null;
 }
 
+// Name eines Verstaerkungslaufs: ersetzt die Katalog-Laenge (40 cm) durch die
+// tatsaechliche Lauflange, z. B. "Verstaerkungsprofil 160 cm (Holz)".
+export function reinforcementRunName(part, lenCm) {
+  const base = (getLang() === 'en' ? part.name_en : null) || part.name || '';
+  return base.replace(/\b40\b/, String(Math.round(lenCm)));
+}
+
 export function defaultPanel() {
   return geometry().defaultPanel || (buildablePanels()[0] && buildablePanels()[0].id);
 }

@@ -1,6 +1,6 @@
 // Stueckliste (BOM) + Kupplungstyp-Heuristik + Bestands-/Machbarkeitscheck.
 
-import { getTube, getConnector, getPanel, colorName, partName, reinforcementPart } from "./catalog.js";
+import { getTube, getConnector, getPanel, colorName, partName, reinforcementPart, reinforcementRunName } from "./catalog.js";
 
 // Einheitsvektoren der Nachbarn eines Knotens. Doppelrohr-Verbindungen (link)
 // sind KEIN Arm der Kupplung und zaehlen nicht in die Kupplungstyp-Heuristik
@@ -259,27 +259,43 @@ export function computeBOM(model) {
     .sort((a, b) => b.count - a.count);
   const slideCount = slides.reduce((s, r) => s + r.count, 0);
 
-  // --- Verstaerkungen (Profile in verstaerkten Rohren) ---
-  // Verstaerkungsprofile (heute Holz, frueher Alu) werden in die Rohre geschoben
-  // und kommen in 40-cm-Laengen. Pro 40 cm verstaerkter Lauf-Laenge ein Stueck;
-  // ein langer Lauf wird also aus mehreren 40-cm-Profilen zusammengeschoben.
+  // --- Verstaerkungen ---
+  // Kollineare verstaerkte Rohre bilden einen "Lauf" (Union-Find). Jeder Lauf
+  // wird als EINE Zeile mit seiner Gesamtlaenge angezeigt: 4 x 40 cm = 160 cm.
+  // Gleich lange Laeufe werden zusammengefasst (z. B. zwei Laeufe a 160 cm -> 2x).
+  // Fuer Bestellung / Bestandspruefung bleibt die physische Stueckzahl massgeblich
+  // (r.pieces): ein 40-cm-Profil geht in jedes einzelne verstaerkte Rohr.
   const runs = reinforcementRuns(model);
   const reinforcements = [];
   const part = reinforcementPart();
-  let pieces = 0;
-  for (const run of runs) pieces += Math.max(1, Math.round(run.length / 40));
-  if (pieces && part) {
-    reinforcements.push({
-      key: part.id,
-      id: part.id,
-      len: 40,
-      name: partName(part),
-      count: pieces,
-      price: part.price,
-      subtotal: round2(part.price * pieces),
-    });
+
+  if (runs.length > 0 && part) {
+    // Laeufe nach gerundeter Gesamtlaenge gruppieren.
+    const lenGroups = new Map(); // len_cm -> { runCount, segCount }
+    for (const run of runs) {
+      const len = Math.round(run.length);
+      if (!lenGroups.has(len)) lenGroups.set(len, { runCount: 0, segCount: 0 });
+      const g = lenGroups.get(len);
+      g.runCount++;
+      g.segCount += run.segments;
+    }
+    // Laengste Laeufe zuerst.
+    for (const [len, g] of [...lenGroups.entries()].sort((a, b) => b[0] - a[0])) {
+      reinforcements.push({
+        key:      part.id + "|" + len,
+        id:       part.id,
+        len,
+        name:     reinforcementRunName(part, len), // z. B. "Verstaerkungsprofil 160 cm (Holz)"
+        count:    g.runCount,    // Anzahl Laeufe dieser Laenge (BOM-Anzeige)
+        pieces:   g.segCount,    // Physische 40-cm-Profile (Bestellung / Bestand)
+        price:    round2(part.price * g.segCount / g.runCount), // Preis je Lauf
+        subtotal: round2(part.price * g.segCount),              // Gesamtpreis Gruppe
+      });
+    }
   }
-  const reinfCount = pieces; // Anzahl benoetigter 40-cm-Profile
+
+  // Gesamtzahl der Laeufe (konzeptuelle Einheiten, erscheint im Summen-Footer).
+  const reinfCount = runs.length;
 
   const price = round2(
     tubes.reduce((s, r) => s + r.subtotal, 0) +
@@ -305,8 +321,9 @@ export function neededParts(bom) {
   for (const r of bom.connectors) connectors.set(r.type, r.count);
   const panels = new Map();  // panelId -> count
   for (const r of bom.panels || []) panels.set(r.panelId, (panels.get(r.panelId) || 0) + r.count);
-  const reinforcements = new Map(); // id -> count
-  for (const r of bom.reinforcements || []) reinforcements.set(r.id, (reinforcements.get(r.id) || 0) + r.count);
+  const reinforcements = new Map(); // id -> physische Stueckzahl (40-cm-Profile)
+  for (const r of bom.reinforcements || [])
+    reinforcements.set(r.id, (reinforcements.get(r.id) || 0) + (r.pieces ?? r.count));
   return { tubes, connectors, panels, reinforcements };
 }
 
