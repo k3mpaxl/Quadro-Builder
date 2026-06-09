@@ -109,10 +109,12 @@ function isDiag45(d) {
 
 // renderRange-Filter (aus dem Referenz-Viewer): Der Viewer rendert NUR Rohre/
 // Platten OHNE renderRangeStart-Feld; Datensätze MIT diesem Feld sind Alternativ-
-// Pass-/Hilfsgeometrie -- meist exakte Duplikate (z.B. die 50 redundanten von 56
-// Diagonalen in C0015). Wir verwerfen sie wie der Viewer. `base` = Anzahl der
-// rest-Felder OHNE renderRange: tube2 = 6 [id,∅,mat,dim1,dim2,dim3];
-// panel2/textil2/display2 = 8 [+offset1,offset2]. rest[base] ist dann renderRangeStart.
+// Pass-/Hilfsgeometrie -- meist exakte Duplikate. Wir verwerfen sie wie der Viewer.
+// `base` = Anzahl der rest-Felder OHNE renderRange:
+//   tube2          = 6  [id,∅,mat,len,endMat,0]
+//   panel2/textil2
+//   /display2      = 8  [id,∅,flag,w,_,h,_,0]
+// rest[base] ist dann renderRangeStart.
 function hasRenderRange(rest, base) {
   return rest.length > base && typeof rest[base] === "number";
 }
@@ -246,6 +248,7 @@ export function parseQDF(text, opts = {}) {
     const body = nodeAt(round(x), round(y), round(z)); // Adapter-Koerper am Rohrende
     body.c45 = true;
     body.c45body = true;
+    if (!connectorNodes.includes(body)) connectorNodes.push(body); // L3-fix: c45body als Snap-Ziel
     if (corner._c45axis) body.c45axis = corner._c45axis; // kardinale Huelsenachse
     if (corner.id !== body.id && !tubeExists(tubes, corner.id, body.id)) {
       tubes.push({ id: "m" + seq++, a: corner.id, b: body.id, arm: true, color: FALLBACK_COLOR });
@@ -351,81 +354,6 @@ export function parseQDF(text, opts = {}) {
       const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
       const color = materials.get(mat) || FALLBACK_COLOR;
       tubes.push({ id: "t" + seq++, a: a.id, b: b.id, tubeId: def.id, color, length: def.length_cm });
-    } else if (p.name === "panel2") {
-      // Platte: tuple = {q0..q3, cx,cy,cz} (Mitte, mm). rest[3]/rest[5] = Kantenmasse (mm).
-      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      if (hasRenderRange(p.rest, 8)) continue; // Alternativ-Pass-Duplikat (wie Viewer)
-      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
-      const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
-      const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
-      const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
-      if (!(dimW > 0) || !(dimH > 0)) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      const panelId = panelIdForDims(dimW + conn, dimH + conn);
-      if (!panelId) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      const h1 = (dimW + conn) / 2, h2 = (dimH + conn) / 2;
-      // Die Platte liegt in einer von drei lokalen Ebenen; je nach Orientierung
-      // spannen unterschiedliche gedrehte Basisachsen die Plattenflaeche auf.
-      // Wir probieren die drei Achsenpaare durch und nehmen das, dessen vier
-      // Ecken auf vorhandenen Kupplungen liegen.
-      const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => rotateByQuat(q, v));
-      const pairs = [[0, 1], [0, 2], [1, 2]];
-      let nodesFound = null;
-      for (const [i, j] of pairs) {
-        for (const [ha, hb] of (h1 === h2 ? [[h1, h2]] : [[h1, h2], [h2, h1]])) {
-          const e1 = axes[i], e2 = axes[j];
-          const corner = (s1, s2) => [
-            round(cx + e1[0] * ha * s1 + e2[0] * hb * s2),
-            round(cy + e1[1] * ha * s1 + e2[1] * hb * s2),
-            round(cz + e1[2] * ha * s1 + e2[2] * hb * s2),
-          ];
-          const cs = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
-          const ns = cs.map((c) => snapToConnector(c[0], c[1], c[2], false));
-          if (ns.every((n) => n)) { nodesFound = ns; break; }
-        }
-        if (nodesFound) break;
-      }
-      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
-      const color = materials.get(mat) || FALLBACK_COLOR;
-      panels.push({ id: "p" + seq++, nodes: nodesFound.map((n) => n.id), panelId, color });
-    } else if (p.name === "textil2") {
-      // Netz/Stoff: gleiche Struktur wie panel2 (Zentrum + Maße + Quat). Wir
-      // finden die 4 Eck-Kupplungen wie bei einer Platte und haengen das Netz
-      // daran auf. Maße sind 35x75/75x75 cm -> Gitter 40x80 (nicht im Platten-
-      // Katalog, daher eigene Textil-Sammlung statt panelId).
-      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      if (hasRenderRange(p.rest, 8)) continue;
-      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
-      const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
-      const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
-      const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
-      if (!(dimW > 0) || !(dimH > 0)) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      const wGrid = dimW + conn, hGrid = dimH + conn; // Gitter-Spannweite (z.B. 40 x 80)
-      const h1 = wGrid / 2, h2 = hGrid / 2;
-      const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => rotateByQuat(q, v));
-      const pairs = [[0, 1], [0, 2], [1, 2]];
-      let nodesFound = null;
-      for (const [i, j] of pairs) {
-        for (const [ha, hb] of (h1 === h2 ? [[h1, h2]] : [[h1, h2], [h2, h1]])) {
-          const e1 = axes[i], e2 = axes[j];
-          const corner = (s1, s2) => [
-            round(cx + e1[0] * ha * s1 + e2[0] * hb * s2),
-            round(cy + e1[1] * ha * s1 + e2[1] * hb * s2),
-            round(cz + e1[2] * ha * s1 + e2[2] * hb * s2),
-          ];
-          const corners = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
-          const ns = corners.map((c) => snapToConnector(c[0], c[1], c[2], false));
-          if (ns.every((n) => n)) { nodesFound = ns; break; }
-        }
-        if (nodesFound) break;
-      }
-      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
-      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
-      const color = materials.get(mat) || FALLBACK_COLOR;
-      textiles.push({
-        id: "x" + seq++, nodes: nodesFound.map((n) => n.id),
-        w: Math.round(Math.min(wGrid, hGrid)), h: Math.round(Math.max(wGrid, hGrid)), color,
-      });
     } else if (
       p.name === "slide2" || p.name === "slide-new2" || p.name === "slide-end2" ||
       p.name === "curved-slide2" || p.name === "roof2"
@@ -436,13 +364,154 @@ export function parseQDF(text, opts = {}) {
       // lokalen Versaetze + 45°/90°-Drehung. q ist [w,x,y,z]; Three nutzt [x,y,z,w].
       if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
       const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+      const qn = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
       const r4 = (v) => Math.round(v * 1e4) / 1e4;
       slides.push({
         id: "s" + seq++,
         x: round(p.tuple[4] / 10), y: round(p.tuple[5] / 10), z: round(p.tuple[6] / 10),
-        quat: [r4(q[1]), r4(q[2]), r4(q[3]), r4(q[0])], // Three-Reihenfolge x,y,z,w (vor Rz90)
+        quat: [r4(q[1]/qn), r4(q[2]/qn), r4(q[3]/qn), r4(q[0]/qn)], // Three-Reihenfolge x,y,z,w (normiert)
         kind: p.name,
       });
+    }
+  }
+
+  // 2.5. Durchlauf: Platten + Textilien + Bällebad-Wände (nach allen Rohren, damit
+  // c45body-Knoten vorhanden sind).
+  //
+  // Hilfsfunktion: sucht 4 Eck-Kupplungen eines rechteckigen Panels. cx/cy/cz ist die
+  // wahre Mitte (symmetrisch zu allen vier Ecken). h1/h2 = halbe Gitter-Spannweiten.
+  // Probiert alle drei Achsenpaare (XY, XZ, YZ) plus gespiegelte h1/h2-Zuweisung.
+  // Gibt [4 node-Refs] zurück, oder null wenn keine passenden Kupplungen gefunden.
+  function findPanelCorners(q, cx, cy, cz, h1, h2) {
+    const axes = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v) => rotateByQuat(q, v));
+    for (const [i, j] of [[0, 1], [0, 2], [1, 2]]) {
+      for (const [ha, hb] of (h1 === h2 ? [[h1, h2]] : [[h1, h2], [h2, h1]])) {
+        const [e1, e2] = [axes[i], axes[j]];
+        const corner = (s1, s2) => [
+          round(cx + e1[0] * ha * s1 + e2[0] * hb * s2),
+          round(cy + e1[1] * ha * s1 + e2[1] * hb * s2),
+          round(cz + e1[2] * ha * s1 + e2[2] * hb * s2),
+        ];
+        const ns = [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)]
+          .map((c) => snapToConnector(c[0], c[1], c[2], false));
+        if (ns.every((n) => n)) return ns;
+      }
+    }
+    return null;
+  }
+
+  for (const raw of lines) {
+    const p = parseLine(raw);
+    if (!p) continue;
+
+    if (p.name === "panel2" || p.name === "display2") {
+      // Platte (panel2) und Infoschild (display2): tuple = {q0..q3, cx,cy,cz} (Mitte, mm).
+      // rest[3]/rest[5] = Kantenmaße (mm). display2 hat identische Struktur und wird als Panel importiert.
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      if (hasRenderRange(p.rest, 8)) continue; // Alternativ-Pass-Duplikat (wie Viewer)
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+      const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
+      const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
+      const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
+      if (!(dimW > 0) || !(dimH > 0)) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const panelId = panelIdForDims(dimW + conn, dimH + conn);
+      if (!panelId) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const nodesFound = findPanelCorners(q, cx, cy, cz, (dimW + conn) / 2, (dimH + conn) / 2);
+      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
+      panels.push({ id: "p" + seq++, nodes: nodesFound.map((n) => n.id), panelId, color: materials.get(mat) || FALLBACK_COLOR });
+
+    } else if (p.name === "textil2") {
+      // Netz/Stoff: gleiche Struktur wie panel2 (Zentrum + Maße + Quat). Maße z.B.
+      // 35x75 cm -> Gitter 40x80 cm (nicht im Platten-Katalog -> eigene Textil-Sammlung).
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      if (hasRenderRange(p.rest, 8)) continue;
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+      const cx = p.tuple[4] / 10, cy = p.tuple[5] / 10, cz = p.tuple[6] / 10;
+      const dimW = (typeof p.rest[3] === "number" ? p.rest[3] : 0) / 10;
+      const dimH = (typeof p.rest[5] === "number" ? p.rest[5] : 0) / 10;
+      if (!(dimW > 0) || !(dimH > 0)) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const wGrid = dimW + conn, hGrid = dimH + conn; // Gitter-Spannweite (z.B. 40 x 80)
+      const nodesFound = findPanelCorners(q, cx, cy, cz, wGrid / 2, hGrid / 2);
+      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
+      textiles.push({
+        id: "x" + seq++, nodes: nodesFound.map((n) => n.id),
+        w: Math.round(Math.min(wGrid, hGrid)), h: Math.round(Math.max(wGrid, hGrid)),
+        color: materials.get(mat) || FALLBACK_COLOR,
+      });
+
+    } else if (p.name === "pool2" || p.name === "pool-small2") {
+      // Bällebad-Wände: feste Geometrie (keine Maße im QDF -- im Original-Binary hardcoded).
+      // Entity-Ursprung = OBERKANTE der Front-Wand -> wahre Mitte = Ursprung - lokaleY*(span1/2).
+      //   pool2:       120 x 40 cm (3 x 1 Felder) -> panelId "pool_wall"
+      //   pool-small2:  40 x 20 cm (1 x 0.5 Felder) -> panelId "panel_40x20"
+      // Das QDF enthält nur EINE Entity pro Bällebad (die Front-Wand). Rückwand + 2 Seitenwände
+      // werden aus dem Kupplungsnetz hergeleitet (Tiefenrichtung = cross(A→B, A→D) der Front-Wand).
+      if (!p.tuple || p.tuple.length < 7) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const [span0, span1] = p.name === "pool2" ? [120, 40] : [40, 20];
+      const panelId = panelIdForDims(span0, span1);
+      if (!panelId) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const q = decodeQuat([p.tuple[0], p.tuple[1], p.tuple[2], p.tuple[3]]);
+      const ay = rotateByQuat(q, [0, 1, 0]); // lokale Y-Achse (Wandhöhe)
+      const cx = p.tuple[4] / 10 + ay[0] * (-span1 / 2);
+      const cy = p.tuple[5] / 10 + ay[1] * (-span1 / 2);
+      const cz = p.tuple[6] / 10 + ay[2] * (-span1 / 2);
+      const nodesFound = findPanelCorners(q, cx, cy, cz, span0 / 2, span1 / 2);
+      if (!nodesFound) { skipped[p.name] = (skipped[p.name] || 0) + 1; continue; }
+      const mat = typeof p.rest[0] === "number" ? p.rest[0] : null;
+      const color = materials.get(mat) || FALLBACK_COLOR;
+      // Front-Wand
+      panels.push({ id: "p" + seq++, nodes: nodesFound.map((n) => n.id), panelId, color });
+      // Restliche 3 Wände aus Kupplungsnetz ableiten
+      const [nA, nB, nC, nD] = nodesFound;
+      const e1 = [nB.x - nA.x, nB.y - nA.y, nB.z - nA.z]; // horizontal
+      const e2 = [nD.x - nA.x, nD.y - nA.y, nD.z - nA.z]; // vertikal
+      const cr = [e1[1]*e2[2]-e1[2]*e2[1], e1[2]*e2[0]-e1[0]*e2[2], e1[0]*e2[1]-e1[1]*e2[0]];
+      const crLen = Math.hypot(...cr) || 1;
+      // Rückwand-Synthese: alle Connector-Tiefen ab nA in dv-Richtung aufzählen,
+      // von nah nach fern testen, bis alle 4 Rückecken auf einem Rechteck liegen.
+      // "Farthest" würde bei Pools, hinter denen weitere Struktur folgt (z.B. C0178),
+      // über die echte Rückwand hinausschießen.
+      const snapAtDepth = (nd, dir, depthCm) => {
+        const ex = nd.x + dir[0]*depthCm, ey = nd.y + dir[1]*depthCm, ez = nd.z + dir[2]*depthCm;
+        return connectorNodes.find(c => Math.hypot(c.x-ex, c.y-ey, c.z-ez) <= 3) || null;
+      };
+      const depthsAlong = (nd, dir) => {
+        const ds = [];
+        for (const c of connectorNodes) {
+          const dx = c.x-nd.x, dy = c.y-nd.y, dz = c.z-nd.z;
+          const proj = dx*dir[0]+dy*dir[1]+dz*dir[2];
+          if (proj < 5) continue;
+          if (Math.hypot(dx-dir[0]*proj, dy-dir[1]*proj, dz-dir[2]*proj) > 3) continue;
+          ds.push(Math.round(proj));
+        }
+        return ds.sort((a, b) => a - b);
+      };
+      let dv = cr.map(v => v / crLen); // Tiefenrichtung (zeigt in den Pool)
+      let depths = depthsAlong(nA, dv);
+      if (depths.length === 0) { dv = dv.map(v => -v); depths = depthsAlong(nA, dv); } // Vorzeichen korrigieren
+      // Entfernteste Tiefe nehmen, bei der ALLE 4 Rückecken existieren.
+      // "Farthest" statt "nearest": Pool-Rückwand ist am Ende, Zwischen-Connectoren
+      // (z.B. Seitenwand-Mittelknoten) würden sonst als falsche Rückwand gelten.
+      let bestDepth = 0, bestBack = null;
+      for (const depthCm of depths) {
+        const bA = snapAtDepth(nA, dv, depthCm);
+        const bB = snapAtDepth(nB, dv, depthCm);
+        const bC = snapAtDepth(nC, dv, depthCm);
+        const bD = snapAtDepth(nD, dv, depthCm);
+        if (bA && bB && bC && bD && depthCm > bestDepth) {
+          bestDepth = depthCm;
+          bestBack = [bA, bB, bC, bD];
+        }
+      }
+      if (bestBack) {
+        const [bA, bB, bC, bD] = bestBack;
+        const sideId = panelIdForDims(bestDepth, span1) || panelId;
+        panels.push({ id: "p" + seq++, nodes: [bA.id, bB.id, bC.id, bD.id], panelId, color }); // Rückwand
+        panels.push({ id: "p" + seq++, nodes: [nA.id, bA.id, bD.id, nD.id], panelId: sideId, color }); // linke Seitenwand
+        panels.push({ id: "p" + seq++, nodes: [nB.id, bB.id, bC.id, nC.id], panelId: sideId, color }); // rechte Seitenwand
+      }
     }
   }
 
@@ -472,7 +541,7 @@ export function parseQDF(text, opts = {}) {
       const proj = mx * u[0] + my * u[1] + mz * u[2];
       if (proj < -conn || proj > span + conn) continue;
       const px = mx - u[0] * proj, py = my - u[1] * proj, pz = mz - u[2] * proj;
-      if (Math.hypot(px, py, pz) > eps + 2) continue; // nicht auf der Alu-Linie
+      if (Math.hypot(px, py, pz) > eps + conn) continue; // nicht auf der Alu-Linie (L1-fix: +conn statt +2)
       const tx = B.x - A.x, ty = B.y - A.y, tz = B.z - A.z;
       const tl = Math.hypot(tx, ty, tz) || 1;
       const cosang = Math.abs((tx * u[0] + ty * u[1] + tz * u[2]) / tl);

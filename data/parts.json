@@ -68,7 +68,8 @@
     { "id": "panel_80x80",      "code": "PA8", "name": "Platte 80 x 80 cm",     "name_en": "Panel 80 x 80 cm",     "w": 80, "h": 80, "price": 12.99, "buildable": true, "colored": true,  "note": "grosses Feld aus vier 75er-Rohren" },
     { "id": "panel_80x20",      "code": "PA6", "name": "Platte 80 x 20 cm",     "name_en": "Panel 80 x 20 cm",     "w": 80, "h": 20, "price": 8.99, "buildable": true,  "colored": true,  "note": "75er x 15er Feld" },
     { "id": "panel_30x30",      "code": "PA3", "name": "Platte 30 x 30 cm",     "name_en": "Panel 30 x 30 cm",     "w": 30, "h": 30, "price": 5.99, "buildable": false, "colored": true,  "note": "30er-Raster (25er-Rohr)" },
-    { "id": "hole_panel_40x40", "code": "PO4", "name": "Lochplatte 40 x 40 cm", "name_en": "Perforated panel 40 x 40 cm", "w": 40, "h": 40, "price": 6.99, "buildable": false, "colored": true,  "note": "nicht begehbar" }
+    { "id": "hole_panel_40x40", "code": "PO4", "name": "Lochplatte 40 x 40 cm", "name_en": "Perforated panel 40 x 40 cm", "w": 40, "h": 40, "price": 6.99, "buildable": false, "colored": true,  "note": "nicht begehbar" },
+    { "id": "panel_70x120",    "code": "P7C", "name": "Platte 70 x 120 cm",    "name_en": "Panel 70 x 120 cm",            "w": 70, "h": 120, "price": 0,    "buildable": true,  "colored": true,  "note": "grosses Rechteck-Panel; L2-fix" }
   ],
   "reinforcements": [
     { "id": "reinforce40", "code": "RV4", "name": "Verstaerkungsprofil 40 cm (Holz)", "name_en": "Reinforcement profile 40 cm (wood)", "length_cm": 40, "material": "Holz", "price": 4.49, "note": "Stab, der in ein Rohr geschoben wird und es versteift; kommt in 40-cm-Laengen; heute aus Holz (frueher Alu, guenstiger); noetig bei frei tragenden, von unten ungestuetzten Ebenen" }
