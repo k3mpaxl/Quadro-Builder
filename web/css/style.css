@@ -74,15 +74,21 @@ body {
   padding: 5px 14px;
   border-top: 1px solid var(--line);
   background: #f7f9fc;
+  /* Kein overflow hier — nur #grp-build scrollt intern */
+}
+/* Bauteil-Gruppe nimmt alle verfügbare Breite und scrollt intern. */
+#toolbar-ctx #grp-build {
+  flex: 1 1 0;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-#toolbar-ctx::-webkit-scrollbar { display: none; }
-/* Kein Umbruch in der Kontextzeile — lieber horizontal scrollen */
+#toolbar-ctx #grp-build::-webkit-scrollbar { display: none; }
+/* Kein Umbruch in der Bauteil-Gruppe */
 #toolbar-ctx .part-row { flex-wrap: nowrap; }
-#toolbar-ctx .group,
-#toolbar-ctx #grp-build { flex-shrink: 0; }
+/* Farbe-Gruppe und alle anderen ctx-Kinder nicht schrumpfen */
+#toolbar-ctx .group { flex-shrink: 0; }
 
 .brand { font-weight: 800; letter-spacing: 0.5px; font-size: 18px; white-space: nowrap; }
 .brand span { color: var(--accent); font-weight: 700; }
@@ -110,6 +116,40 @@ body {
 }
 .btn.part svg { display: block; }
 .btn.part span { font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* Aktive Bauteil-Buttons: in der gewählten Baufarbe einfärben */
+.btn.part[data-tube].active,
+.btn.part[data-panel].active {
+  background: var(--part-bg, var(--accent));
+  border-color: var(--part-bg, var(--accent));
+  color: var(--part-ink, var(--accent-ink));
+  box-shadow: none;
+}
+
+/* Löschen-Button: pinned rechts in toolbar-ctx, rot wenn aktiv */
+.delete-part { flex-shrink: 0; }
+.delete-part.active {
+  background: var(--no);
+  border-color: var(--no);
+  color: #fff;
+  box-shadow: none;
+}
+
+/* Disabled-Zustand für Part-Buttons (z. B. Undo wenn leer) */
+.btn.part:disabled { opacity: 0.38; cursor: default; }
+.btn.part:disabled:hover { border-color: var(--line); background: #fff; }
+
+/* Farb-Auswahl-Popup (erscheint beim 2. Klick auf aktiven Part-Button) */
+.color-popup {
+  display: flex;
+  gap: 7px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  z-index: 200;
+}
 .btn.icon-btn { display: inline-flex; align-items: center; gap: 5px; }
 .btn.icon-btn svg { display: block; }
 
@@ -130,6 +170,11 @@ body {
   z-index: 100;
   display: flex; flex-direction: column; gap: 8px;
 }
+/* Entwürfe-Menü: breiter, damit lange Dateinamen lesbar bleiben */
+#file-pop {
+  width: min(380px, calc(100vw - 28px));
+}
+#file-pop select { max-width: none; }
 .menu-section { display: flex; flex-direction: column; gap: 6px; }
 .menu-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
 .menu-row { display: flex; gap: 6px; align-items: center; }
@@ -375,6 +420,47 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
   font-size: 11px; font-weight: 700; color: #45505f;
   background: #eef2f7; border: 1px solid var(--line); border-radius: 5px;
   padding: 1px 6px; font-variant-numeric: tabular-nums;
+}
+
+/* Responsive — ab 768 px aufwärts gilt das volle Desktop-Layout.
+   Strategie: zwei Stufen
+   ① ≤768px  — Nicht-essentielles (Undo, Namen, Hinweise) wandert ins ···-Menü
+   ② ≤480px  — ···-Popup öffnet sich volle Breite (Hamburger-Stil) */
+
+/* Elemente, die nur auf kleinen Bildschirmen sichtbar sind */
+.show-mobile { display: none !important; }
+
+/* ① Ab ≤768 px: Undo + Namen + Hinweise ausblenden → landen im ···-Menü */
+@media (max-width: 768px) {
+  /* Brand: "Builder" weglassen, nur QUADRO zeigen */
+  .brand span { display: none; }
+
+  /* Ausblenden im Toolbar */
+  .hide-mobile { display: none !important; }
+
+  /* Einblenden im ···-Menü */
+  .show-mobile { display: flex !important; }
+  .menu-section.show-mobile { flex-direction: column; gap: 6px; }
+
+  /* Toolbar: Hauptzeile kompakter */
+  #toolbar-left  { padding: 5px 10px; gap: 6px; }
+  #toolbar-right { padding: 5px 10px; gap: 6px; }
+  #toolbar-ctx   { padding: 4px 10px; }
+}
+
+/* ② Ab ≤480 px: ···-Popup volle Breite + nur Kern-Teile in der Bauteil-Leiste */
+@media (max-width: 480px) {
+  #more-menu .menu-pop {
+    right: 0;
+    left: 0;
+    width: auto;
+    max-width: none;
+    border-radius: 0 0 10px 10px;
+    border-top: none;
+    top: 100%;
+  }
+  /* Nicht-essentielle Tubes (10, 20, 25, 52 cm) und Platten (80er) ausblenden */
+  .hide-narrow { display: none !important; }
 }
 
 /* Druckbereich (nur beim Drucken sichtbar) */

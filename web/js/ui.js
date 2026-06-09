@@ -77,7 +77,9 @@ export function initUI({ scene, model, builder }) {
   builder.onNotice = (msg) => flash(msg);
   builder.onHistoryChange = () => updateUndoButton();
   function updateUndoButton() {
-    $("btn-undo").disabled = !builder.canUndo();
+    const off = !builder.canUndo();
+    $("btn-undo").disabled = off;
+    const mu = $("mobile-btn-undo"); if (mu) mu.disabled = off;
   }
 
   // --- Autosave-Anzeige --------------------------------------------------
@@ -120,6 +122,14 @@ export function initUI({ scene, model, builder }) {
     if (moreMenu && !moreMenu.contains(e.target)) toggleMoreMenu(false);
   });
 
+  // Mobile-only Buttons im ···-Menü
+  const mbu = $("mobile-btn-undo");
+  const mbl = $("mobile-btn-labels");
+  const mbh = $("mobile-btn-hints");
+  if (mbu) mbu.addEventListener("click", () => { builder.undo(); toggleMoreMenu(false); });
+  if (mbl) mbl.addEventListener("click", () => { toggleLabels(); toggleMoreMenu(false); });
+  if (mbh) mbh.addEventListener("click", () => { toggleHints(); toggleMoreMenu(false); });
+
   // --- Modus -------------------------------------------------------------
   $("mode-add").addEventListener("click", () => setMode("add"));
   $("mode-clamp").addEventListener("click", () => setMode("clamp"));
@@ -133,10 +143,12 @@ export function initUI({ scene, model, builder }) {
   function toggleLabels() {
     builder.setShowLabels(!builder.showLabels);
     $("btn-labels").classList.toggle("active", builder.showLabels);
+    const ml = $("mobile-btn-labels"); if (ml) ml.classList.toggle("active", builder.showLabels);
   }
   function toggleHints() {
     builder.setShowHints(!builder.showHints);
     $("btn-hints").classList.toggle("active", builder.showHints);
+    const mh = $("mobile-btn-hints"); if (mh) mh.classList.toggle("active", builder.showHints);
     if (builder.showHints) {
       const n = builder.suggestionCount();
       flash(n ? t("flash_hints_n", n) : t("flash_hints_0"));
@@ -156,6 +168,7 @@ export function initUI({ scene, model, builder }) {
     panelWrap.querySelectorAll("button").forEach((x) =>
       x.classList.toggle("active", inPanel && x.dataset.panel === builder.panelId));
     $("btn-diagonal").classList.toggle("active", inAdd && builder.diagonal);
+    syncPartColors();
   }
 
   function setMode(m) {
@@ -165,7 +178,7 @@ export function initUI({ scene, model, builder }) {
     $("mode-delete").classList.toggle("active", m === "delete");
     $("mode-reinforce").classList.toggle("active", m === "reinforce");
     $("mode-assembly").classList.toggle("active", m === "assembly");
-    $("toolbar-ctx").hidden = m === "assembly" || m === "reinforce" || m === "clamp";
+    $("toolbar-ctx").hidden = m === "assembly";
     // Aufbau-Modus zeigt das Aufbau-Panel; beim Verlassen zurück zum zuletzt
     // gewählten Panel (oder zu). Andere Modi lassen das Panel unberührt.
     if (m === "assembly") {
@@ -191,11 +204,123 @@ export function initUI({ scene, model, builder }) {
     if (m === "assembly") renderAssembly();
   }
 
+  // --- Farb-Popup (erscheint beim 2. Klick auf den bereits aktiven Part-Button) ---
+  const PANEL_EXTRA_COLORS = [{ id: "black", name: "Schwarz", name_en: "Black", hex: "#2b2b2b" }];
+
+  let activeColorPopup = null;
+  let colorPopupAnchor = null; // Button, der das Popup geöffnet hat
+
+  function colorHexFor(colorId) {
+    const c = tubeColors().find((x) => x.id === colorId);
+    if (c) return c.hex;
+    const extra = PANEL_EXTRA_COLORS.find((x) => x.id === colorId);
+    return extra ? extra.hex : "#888";
+  }
+
+  /** Helligkeit prüfen → braucht dunkle Schrift? */
+  function needsDarkInk(hex) {
+    if (!hex || hex.length < 7) return false;
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    return 0.299 * r + 0.587 * g + 0.114 * b > 0.55;
+  }
+
+  /** Aktive Tube/Panel-Buttons in der gewählten Baufarbe einfärben. */
+  function syncPartColors() {
+    const hex = colorHexFor(builder.color);
+    const ink = needsDarkInk(hex) ? "var(--ink)" : "#fff";
+    document.querySelectorAll(".btn.part[data-tube], .btn.part[data-panel]").forEach((b) => {
+      if (b.classList.contains("active")) {
+        b.style.setProperty("--part-bg", hex);
+        b.style.setProperty("--part-ink", ink);
+      } else {
+        b.style.removeProperty("--part-bg");
+        b.style.removeProperty("--part-ink");
+      }
+    });
+  }
+
+  function closeColorPopup() {
+    if (!activeColorPopup) return;
+    activeColorPopup.remove();
+    activeColorPopup = null;
+    colorPopupAnchor = null;
+    document.removeEventListener("click", onPopupOutsideClick);
+  }
+
+  function onPopupOutsideClick(e) {
+    // Klick auf den Anker-Button selbst (oder dessen Kinder) → Popup bleibt offen;
+    // der Button-Handler togglet das Popup dann selbst.
+    if (colorPopupAnchor && colorPopupAnchor.contains(e.target)) return;
+    if (activeColorPopup && !activeColorPopup.contains(e.target)) closeColorPopup();
+  }
+
+  /**
+   * Öffnet ein kleines Farbwahl-Popup unter dem Anker-Button.
+   * Zweiter Klick auf denselben Button schließt es wieder (Toggle).
+   * partType: "tube" → 4 Farben; "panel" → 4 + Schwarz.
+   */
+  function showColorPopup(anchorBtn, partType) {
+    // Toggle: Popup für denselben Button bereits offen → schließen
+    if (activeColorPopup && colorPopupAnchor === anchorBtn) {
+      closeColorPopup();
+      return;
+    }
+    closeColorPopup();
+
+    const colors = tubeColors();
+    const list = partType === "panel" ? [...colors, ...PANEL_EXTRA_COLORS] : colors;
+
+    const pop = document.createElement("div");
+    pop.className = "color-popup";
+
+    list.forEach((c) => {
+      const sw = el("button", "swatch" + (c.id === builder.color ? " active" : ""));
+      sw.style.background = c.hex;
+      sw.title = c.name;
+      sw.dataset.color = c.id;
+      sw.addEventListener("click", (e) => {
+        e.stopPropagation();
+        builder.setColor(c.id);
+        syncPartColors();
+        closeColorPopup();
+      });
+      pop.appendChild(sw);
+    });
+
+    document.body.appendChild(pop);
+
+    // Popup unter dem Anker-Button positionieren (fixed, damit kein Clipping)
+    const rect = anchorBtn.getBoundingClientRect();
+    pop.style.position = "fixed";
+    pop.style.top = (rect.bottom + 5) + "px";
+    pop.style.left = rect.left + "px";
+
+    // Rechts am Viewport-Rand ausrichten wenn nötig
+    requestAnimationFrame(() => {
+      const pw = pop.offsetWidth;
+      const maxLeft = window.innerWidth - pw - 8;
+      if (parseFloat(pop.style.left) > maxLeft) pop.style.left = maxLeft + "px";
+    });
+
+    activeColorPopup = pop;
+    colorPopupAnchor = anchorBtn;
+    // Leicht verzögert registrieren, damit der auslösende Klick nicht sofort schließt
+    setTimeout(() => document.addEventListener("click", onPopupOutsideClick), 0);
+  }
+
   // --- Rohr-Buttons ------------------------------------------------------
+  // Kern-Tubes: auf schmalen Screens sichtbar; der Rest bekommt hide-narrow
+  const ESSENTIAL_TUBES  = new Set(["T15", "T35", "T75"]);
+  // Kern-Platten: auf schmalen Screens sichtbar
+  const ESSENTIAL_PANELS = new Set(["panel_40x40", "panel_40x20"]);
+
   const tubeWrap = $("tube-buttons");
   const tubes = buildableTubes();
   tubes.forEach((tube, i) => {
-    const b = el("button", "btn part");
+    const narrow = ESSENTIAL_TUBES.has(tube.id) ? "" : " hide-narrow";
+    const b = el("button", "btn part" + narrow);
     b.dataset.tube = tube.id;
     b.title = `${tube.name} – ${eur(tube.price)} (${i + 1})`;
     const w = Math.round(8 + Math.min(tube.length_cm, 75) / 75 * 18);
@@ -205,9 +330,14 @@ export function initUI({ scene, model, builder }) {
       `<span>${tube.length_cm}</span>`;
     if (tube.id === builder.tubeId) b.classList.add("active");
     b.addEventListener("click", () => {
-      builder.setTube(tube.id);
-      if (builder.mode !== "add") setMode("add");
-      else syncPartHighlights();
+      const wasActive = builder.mode === "add" && builder.tubeId === tube.id;
+      if (wasActive) {
+        showColorPopup(b, "tube");
+      } else {
+        builder.setTube(tube.id);
+        if (builder.mode !== "add") setMode("add");
+        else syncPartHighlights();
+      }
     });
     tubeWrap.appendChild(b);
   });
@@ -215,7 +345,8 @@ export function initUI({ scene, model, builder }) {
   // --- Platten-Buttons ---------------------------------------------------
   const panelWrap = $("panel-buttons");
   for (const p of buildablePanels()) {
-    const b = el("button", "btn part");
+    const narrow = ESSENTIAL_PANELS.has(p.id) ? "" : " hide-narrow";
+    const b = el("button", "btn part" + narrow);
     b.dataset.panel = p.id;
     b.title = `${p.name} – ${eur(p.price)}`;
     b.innerHTML =
@@ -224,26 +355,15 @@ export function initUI({ scene, model, builder }) {
       `<span>${p.w}×${p.h}</span>`;
     if (p.id === builder.panelId) b.classList.add("active");
     b.addEventListener("click", () => {
-      builder.setPanel(p.id);
-      setMode("panel");
+      const wasActive = builder.mode === "panel" && builder.panelId === p.id;
+      if (wasActive) {
+        showColorPopup(b, "panel");
+      } else {
+        builder.setPanel(p.id);
+        setMode("panel");
+      }
     });
     panelWrap.appendChild(b);
-  }
-
-  // --- Farben ------------------------------------------------------------
-  const sw = $("color-swatches");
-  for (const c of tubeColors()) {
-    const b = el("button", "swatch");
-    b.style.background = c.hex;
-    b.title = c.name;
-    b.dataset.color = c.id;
-    if (c.id === builder.color) b.classList.add("active");
-    b.addEventListener("click", () => {
-      builder.setColor(c.id);
-      sw.querySelectorAll(".swatch").forEach((x) => x.classList.remove("active"));
-      b.classList.add("active");
-    });
-    sw.appendChild(b);
   }
 
   // --- Aktionen ----------------------------------------------------------
