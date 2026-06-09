@@ -64,7 +64,25 @@ body {
   padding: 6px 14px;
   flex-shrink: 0;
   border-left: 1px solid var(--line);
+  position: relative; /* Anker für Hamburger-Dropdown */
 }
+
+/* Desktop: inner = normaler Inline-Flex-Container */
+#toolbar-right-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Icon-Gruppe: Desktop = inline Flex-Row (fügt sich nahtlos ein) */
+.toolbar-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Hamburger: nur auf Mobile sichtbar */
+#btn-hamburger { display: none; }
 
 /* Kontextzeile: Bauteil-Auswahl + Farbe */
 #toolbar-ctx {
@@ -444,7 +462,7 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
    ≤768px  — kompakte Darstellung
    ≤480px  — nur Kern-Teile in der Bauteil-Leiste */
 
-/* ≤768 px: kompakter Toolbar */
+/* ≤768 px: Hamburger-Modus */
 @media (max-width: 768px) {
   /* Brand: "Builder" weglassen, nur QUADRO zeigen */
   .brand span { display: none; }
@@ -454,8 +472,71 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
 
   /* Toolbar: Hauptzeile kompakter */
   #toolbar-left  { padding: 5px 10px; gap: 6px; }
-  #toolbar-right { padding: 5px 10px; gap: 6px; }
+  #toolbar-right { padding: 5px 8px;  gap: 0; border-left: none; }
   #toolbar-ctx   { padding: 4px 10px; }
+
+  /* Hamburger-Button einblenden */
+  #btn-hamburger { display: inline-flex !important; }
+
+  /* toolbar-icon-row wird zur echten Flex-Zeile im Dropdown */
+  #toolbar-right-inner .toolbar-icon-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  /* Divider innerhalb der Icon-Zeile bleibt vertikal */
+  #toolbar-right-inner .toolbar-icon-row .divider {
+    width: 1px;
+    height: 20px;
+    margin: 0 2px;
+  }
+
+  /* Inner: standardmäßig verborgen — wird per .open gezeigt */
+  #toolbar-right-inner {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.13);
+    padding: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    min-width: 220px;
+    z-index: 300;
+  }
+
+  #toolbar-right-inner.open { display: flex; }
+
+  /* Trennlinien werden horizontal */
+  #toolbar-right-inner .divider {
+    width: 100%;
+    height: 1px;
+    background: var(--line);
+    margin: 3px 0;
+  }
+
+  /* Entwürfe-Button volle Breite */
+  #toolbar-right-inner #btn-file {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  #toolbar-right-inner #file-menu { width: 100%; }
+
+  /* Sprach-Dropdown volle Breite */
+  #toolbar-right-inner .lang-select { width: 100%; }
+
+  /* file-pop: volle Viewport-Breite auf Mobile */
+  #file-pop {
+    position: fixed;
+    right: 8px;
+    left: 8px;
+    width: auto;
+    top: auto;
+  }
 }
 
 /* ≤480 px: nur Kern-Teile in der Bauteil-Leiste */

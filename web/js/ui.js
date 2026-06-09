@@ -108,6 +108,22 @@ export function initUI({ scene, model, builder }) {
     if (fileMenu && !fileMenu.contains(e.target)) toggleFileMenu(false);
   });
 
+  // --- Hamburger-Menü (Mobile) -------------------------------------------
+  const hamburgerBtn = $("btn-hamburger");
+  const hamburgerInner = $("toolbar-right-inner");
+  function toggleHamburger(open) {
+    const show = open == null ? !hamburgerInner.classList.contains("open") : open;
+    hamburgerInner.classList.toggle("open", show);
+    hamburgerBtn.classList.toggle("active", show);
+  }
+  if (hamburgerBtn) {
+    hamburgerBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleHamburger(); });
+    document.addEventListener("click", (e) => {
+      if (!hamburgerInner.contains(e.target) && e.target !== hamburgerBtn)
+        toggleHamburger(false);
+    });
+  }
+
 
   // --- Modus -------------------------------------------------------------
   $("mode-add").addEventListener("click", () => setMode("add"));
