@@ -1162,7 +1162,16 @@ export class SceneManager {
     for (const n of nodes) if (hxz(n) < 80 && n.y > maxY) maxY = n.y;
     const ridge = nodes.filter((n) => Math.abs(n.y - maxY) < 8 && hxz(n) < 80);
     // C45-Traufen-Ecken: C45-Knoten im Dach-Hoehenband, nahe roof2.
-    const eaves = nodes.filter((n) => (n.c45 || n.c45body) && n.y < maxY - 15 && n.y > maxY - 115 && hxz(n) < 140);
+    // Bei komplexen Strukturen (z.B. C0178) gibt es C45-Knoten von benachbarten Abschnitten
+    // auf verschiedenen Hoehenebenen. Wir nehmen die HOECHSTE Ebene die mind. 4 Knoten liefert
+    // (= die echten Traufen-Knoten, die dem First am naechsten liegen).
+    const eavesAll = nodes.filter((n) => (n.c45 || n.c45body) && n.y < maxY - 15 && n.y > maxY - 115 && hxz(n) < 140);
+    const yLevels = [...new Set(eavesAll.map((n) => Math.round(n.y * 10) / 10))].sort((a, b) => b - a);
+    let eaves = eavesAll; // Fallback (triggert eaves.length<4-Check unten)
+    for (const y0 of yLevels) {
+      const band = eavesAll.filter((n) => Math.abs(n.y - y0) < 8);
+      if (band.length >= 4) { eaves = band; break; }
+    }
     if (ridge.length < 2 || eaves.length < 4) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(80, 0.6, 80), mat); // Fallback
       m.position.copy(P); m.userData = { kind: "slide", id: sl.id };
