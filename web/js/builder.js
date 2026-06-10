@@ -1,8 +1,10 @@
 // Bau-Interaktion: Auswahl, Anbau ueber Richtungs-Handles, Loeschen.
 
-import { DIRECTIONS, DIAGONAL_DIRECTIONS } from "./config.js";
-import { geometry, getTube, spacingFor, getPanel, defaultPanel, diagonalTubeId } from "./catalog.js";
+import { DIRECTIONS, DIAGONAL_DIRECTIONS, DIR_ALIGN_TOL, ARM_ALIGN_TOL, CLAMP_LINK_DIST } from "./config.js";
+import { geometry, getTube, spacingFor, getPanel, defaultPanel, diagonalTubeId, slideKindLabel } from "./catalog.js";
 import { computeBuildPlan, connectorLabelInfo } from "./buildplan.js";
+import { t } from "./i18n.js";
+import { round2 } from "./util.js";
 
 const CLICK_TOLERANCE = 9; // px: groessere Bewegung = Kamera drehen, kein Klick (Touch-tauglich)
 
@@ -27,6 +29,7 @@ export class Builder {
     this.assemblyStep = 0;
 
     this._undoStack = [];
+    this._redoStack = [];
     this._maxUndo = 60;
 
     this._down = null;
@@ -44,6 +47,7 @@ export class Builder {
     if (after !== before) {
       this._undoStack.push(before);
       if (this._undoStack.length > this._maxUndo) this._undoStack.shift();
+      this._redoStack = []; // neue Aenderung verwirft die Redo-Historie
       this.onHistoryChange();
     }
     return ret;
@@ -51,12 +55,34 @@ export class Builder {
 
   canUndo() { return this._undoStack.length > 0; }
 
-  clearHistory() { this._undoStack = []; this.onHistoryChange(); }
+  canRedo() { return this._redoStack.length > 0; }
+
+  clearHistory() {
+    this._undoStack = [];
+    this._redoStack = [];
+    this.onHistoryChange();
+  }
 
   undo() {
     if (!this._undoStack.length) return;
     const prev = this._undoStack.pop();
+    this._redoStack.push(JSON.stringify(this.model.toJSON()));
+    if (this._redoStack.length > this._maxUndo) this._redoStack.shift();
     this.model.loadJSON(JSON.parse(prev));
+    if (this.selectedNodeId && !this.model.nodes.has(this.selectedNodeId)) {
+      this.selectedNodeId = null;
+    }
+    if (this.mode === "assembly") this.enterAssembly();
+    this.onHistoryChange();
+    this.refresh();
+  }
+
+  redo() {
+    if (!this._redoStack.length) return;
+    const next = this._redoStack.pop();
+    this._undoStack.push(JSON.stringify(this.model.toJSON()));
+    if (this._undoStack.length > this._maxUndo) this._undoStack.shift();
+    this.model.loadJSON(JSON.parse(next));
     if (this.selectedNodeId && !this.model.nodes.has(this.selectedNodeId)) {
       this.selectedNodeId = null;
     }
@@ -139,7 +165,7 @@ export class Builder {
         node.id, dirVec, this.tubeId, this.color, tube.length_cm, spacingFor(tube.length_cm)
       );
     });
-    if (res && res.collision) this.onNotice("Hier liegt schon ein Rohr – kein Platz.");
+    if (res && res.collision) this.onNotice(t("notice_collision"));
     else if (res && res.node) this.selectedNodeId = res.node.id;
     this.refresh();
   }
@@ -194,7 +220,7 @@ export class Builder {
     const dt = getTube(diagonalTubeId());
     if (!dt) return;
     const axis = this._diagSleeveAxis(node, dirVec);
-    if (!axis) { this.onNotice("Kein freier Arm für die Winkelkupplung – hier nicht möglich."); return; }
+    if (!axis) { this.onNotice(t("notice_no_free_arm")); return; }
     const cs = geometry().connectorSize;
     let res;
     this.recordHistory(() => {
@@ -203,7 +229,7 @@ export class Builder {
         dt.length_cm, spacingFor(dt.length_cm), cs, cs * 0.75
       );
     });
-    if (res && res.collision) this.onNotice("Hier liegt schon ein Rohr – kein Platz.");
+    if (res && res.collision) this.onNotice(t("notice_collision"));
     else if (res && res.node) this.selectedNodeId = res.node.id;
     this.refresh();
   }
@@ -217,11 +243,7 @@ export class Builder {
     const assembly = this.mode === "assembly" && this.buildPlan.steps.length
       ? this._assemblyVisibility() : null;
     const labelFor = this.showLabels ? (node) => connectorLabelInfo(this.model, node) : null;
-    const SLIDE_LABELS = {
-      "slide2": "Rutsche", "slide-new2": "Rutsche",
-      "slide-end2": "Rutschen-Endstück", "curved-slide2": "Bogenrutsche", "roof2": "Dach",
-    };
-    const slideNameFor = this.showLabels ? (sl) => SLIDE_LABELS[sl.kind] || null : null;
+    const slideNameFor = this.showLabels ? (sl) => slideKindLabel(sl.kind) : null;
     const suggest = (this.showHints || this.mode === "reinforce")
       ? this.model.reinforcementSuggestions() : null;
     const reinforce = this.mode === "reinforce";
@@ -269,7 +291,7 @@ export class Builder {
       if (occupied.has(d.name)) continue;
       // C45-Schräge nur anbieten, wenn ein freier Arm fuer die Winkelkupplung da ist.
       if (isC45 && !this._diagSleeveAxis(node, d.vec)) continue;
-      const isCardDir = Math.max(Math.abs(d.vec[0]), Math.abs(d.vec[1]), Math.abs(d.vec[2])) > 0.99;
+      const isCardDir = Math.max(Math.abs(d.vec[0]), Math.abs(d.vec[1]), Math.abs(d.vec[2])) > DIR_ALIGN_TOL;
       const hg = (useDiag && !isCardDir) ? gap * 1.6 : gap;
       const pos = [
         node.x + d.vec[0] * hg,
@@ -277,7 +299,7 @@ export class Builder {
         node.z + d.vec[2] * hg,
       ];
       this.scene.addHandle(
-        pos, { nodeId: node.id, dir: d.vec, dirName: d.name, diagonal: isC45, slope: isSlope, useArmDir: hasArmDirs },
+        pos, { nodeId: node.id, dir: d.vec, dirName: d.name, diagonal: isC45, slope: isSlope },
         (useDiag && !isCardDir) ? "diag" : "dir"
       );
     }
@@ -296,7 +318,7 @@ export class Builder {
         : t.b === node.id ? this.model.nodes.get(t.a) : null;
       if (!o) continue;
       const v = [o.x - node.x, o.y - node.y, o.z - node.z], L = Math.hypot(...v) || 1, u = v.map((c) => c / L);
-      if (Math.max(...u.map(Math.abs)) < 0.99) { d = u; break; }
+      if (Math.max(...u.map(Math.abs)) < DIR_ALIGN_TOL) { d = u; break; }
     }
     if (!d) return null;
     const act = [0, 1, 2].filter((a) => Math.abs(d[a]) > 0.3);
@@ -307,7 +329,7 @@ export class Builder {
       if (Math.abs(dd.vec[k]) < 0.01 && Math.abs(dd.vec[act[0]]) > 0.3 && Math.abs(dd.vec[act[1]]) > 0.3) out.push(dd);
     }
     for (const cd of DIRECTIONS) {
-      if (Math.abs(cd.vec[k]) > 0.99) out.push(cd);
+      if (Math.abs(cd.vec[k]) > DIR_ALIGN_TOL) out.push(cd);
     }
     return out.length ? out : null;
   }
@@ -321,7 +343,7 @@ export class Builder {
         : t.b === node.id ? this.model.nodes.get(t.a) : null;
       if (!o) continue;
       const dx = o.x - node.x, dy = o.y - node.y, dz = o.z - node.z, L = Math.hypot(dx, dy, dz) || 1;
-      if (Math.max(Math.abs(dx / L), Math.abs(dy / L), Math.abs(dz / L)) < 0.99) return true;
+      if (Math.max(Math.abs(dx / L), Math.abs(dy / L), Math.abs(dz / L)) < DIR_ALIGN_TOL) return true;
     }
     return false;
   }
@@ -336,7 +358,7 @@ export class Builder {
         const dx = nb.x - node.x, dy = nb.y - node.y, dz = nb.z - node.z;
         const len = Math.hypot(dx, dy, dz) || 1;
         for (const d of node.armDirs) {
-          if ((dx * d.vec[0] + dy * d.vec[1] + dz * d.vec[2]) / len > 0.92) {
+          if ((dx * d.vec[0] + dy * d.vec[1] + dz * d.vec[2]) / len > ARM_ALIGN_TOL) {
             occ.add(d.name);
           }
         }
@@ -359,7 +381,7 @@ export class Builder {
           const dx = F.x - B.x, dy = F.y - B.y, dz = F.z - B.z;
           const len = Math.hypot(dx, dy, dz) || 1;
           for (const d of DIAGONAL_DIRECTIONS) {
-            if ((dx * d.vec[0] + dy * d.vec[1] + dz * d.vec[2]) / len > 0.99) occ.add(d.name);
+            if ((dx * d.vec[0] + dy * d.vec[1] + dz * d.vec[2]) / len > DIR_ALIGN_TOL) occ.add(d.name);
           }
         }
       }
@@ -374,8 +396,8 @@ export class Builder {
       const dx = nb.x - node.x, dy = nb.y - node.y, dz = nb.z - node.z;
       const len = Math.hypot(dx, dy, dz) || 1;
       const ux = dx / len, uy = dy / len, uz = dz / len;
-      for (const d of DIRECTIONS) if (ux * d.vec[0] + uy * d.vec[1] + uz * d.vec[2] > 0.99) occ.add(d.name);
-      for (const d of DIAGONAL_DIRECTIONS) if (ux * d.vec[0] + uy * d.vec[1] + uz * d.vec[2] > 0.99) occ.add(d.name);
+      for (const d of DIRECTIONS) if (ux * d.vec[0] + uy * d.vec[1] + uz * d.vec[2] > DIR_ALIGN_TOL) occ.add(d.name);
+      for (const d of DIAGONAL_DIRECTIONS) if (ux * d.vec[0] + uy * d.vec[1] + uz * d.vec[2] > DIR_ALIGN_TOL) occ.add(d.name);
     }
     return occ;
   }
@@ -467,7 +489,7 @@ export class Builder {
       const clamp = this.model.addClamp(round2(pos[0]), round2(pos[1]), round2(pos[2]));
       clamp.dir = u.map(round2); clamp.off = off.map(round2);
     });
-    this.onNotice("Doppelrohrverbinder gesetzt – grüner Punkt: zweites Rohr.");
+    this.onNotice(t("notice_clamp_placed"));
     this.refresh();
   }
 
@@ -494,10 +516,10 @@ export class Builder {
           const d = Math.hypot(m.x - nn.x, m.y - nn.y, m.z - nn.z);
           if (d < nd) { nd = d; near = m; }
         }
-        if (near && nd < 7) this.model.addLink(near.id, nn.id);
+        if (near && nd < CLAMP_LINK_DIST) this.model.addLink(near.id, nn.id);
       }
     });
-    this.onNotice("Zweites Rohr im Doppelrohrverbinder gesetzt.");
+    this.onNotice(t("notice_second_tube_placed"));
     this.refresh();
   }
 
@@ -541,7 +563,7 @@ export class Builder {
     if (!pick || pick.data.kind !== "tube") return;
     let on;
     this.recordHistory(() => { on = this.model.toggleReinforced(pick.data.id); });
-    this.onNotice(on ? "Verstaerkung hinzugefuegt." : "Verstaerkung entfernt.");
+    this.onNotice(t(on ? "notice_reinforce_added" : "notice_reinforce_removed"));
     this.refresh();
   }
 
@@ -555,12 +577,12 @@ export class Builder {
     if (!pick) return;
     if (pick.data.kind === "clamp") {
       this.recordHistory(() => this.model.removeClamp(pick.data.id));
-      this.onNotice("Doppelrohrverbinder entfernt.");
+      this.onNotice(t("notice_clamp_removed"));
       this.refresh();
       return;
     }
     if (pick.data.kind !== "tube" || !pick.point) {
-      this.onNotice("Auf ein Rohr klicken, um einen Doppelrohrverbinder zu setzen.");
+      this.onNotice(t("notice_clamp_click_tube"));
       return;
     }
     this._placeClampOnTube(pick.data.id, pick.point);
@@ -572,7 +594,7 @@ export class Builder {
     if (pick && (pick.data.kind === "panel" || pick.data.kind === "textile")) {
       let changed;
       this.recordHistory(() => { changed = this.model.setColorOf(pick.data.kind, pick.data.id, this.color); });
-      if (changed) { this.onNotice("Farbe geändert."); this.refresh(); }
+      if (changed) { this.onNotice(t("notice_color_changed")); this.refresh(); }
       return;
     }
     // Neues Platten-Handle → Platte hinzufügen.
@@ -601,7 +623,7 @@ export class Builder {
         const cs = geometry().connectorSize;
         const node = this.model.nodes.get(h.data.nodeId);
         const axis = node && this._diagSleeveAxis(node, h.data.dir);
-        if (!axis) { this.onNotice("Kein freier Arm für die Winkelkupplung – hier nicht möglich."); return; }
+        if (!axis) { this.onNotice(t("notice_no_free_arm")); return; }
         this.recordHistory(() => {
           res = this.model.extendC45Diagonal(
             h.data.nodeId, h.data.dir, axis, dt.id,
@@ -617,15 +639,10 @@ export class Builder {
             h.data.nodeId, h.data.dir, dt.id, this.color, dt.length_cm, spacingFor(dt.length_cm)
           );
         });
-      } else if (h.data.useArmDir) {
-        // Rotierte Kupplung: normales Rohr in Arm-Richtung, kein C45-Adapter.
-        const tube = getTube(this.tubeId);
-        this.recordHistory(() => {
-          res = this.model.extend(
-            h.data.nodeId, h.data.dir, tube.id, this.color, tube.length_cm, spacingFor(tube.length_cm)
-          );
-        });
       } else {
+        // Normales Rohr in Achsrichtung -- entweder kardinal/diagonal, oder
+        // (bei rotierten Kupplungen aus QDF-Import) entlang einer Arm-Richtung;
+        // model.extend() braucht das nicht zu unterscheiden.
         const tube = getTube(this.tubeId);
         this.recordHistory(() => {
           res = this.model.extend(
@@ -633,7 +650,7 @@ export class Builder {
           );
         });
       }
-      if (res && res.collision) this.onNotice("Hier liegt schon ein Rohr – kein Platz.");
+      if (res && res.collision) this.onNotice(t("notice_collision"));
       else if (res && res.node) this.selectedNodeId = res.node.id;
       this.refresh();
       return;
@@ -649,7 +666,7 @@ export class Builder {
       let changed;
       this.recordHistory(() => { changed = this.model.setColorOf(pick.data.kind, pick.data.id, this.color); });
       if (changed) {
-        this.onNotice("Farbe geändert.");
+        this.onNotice(t("notice_color_changed"));
         this.refresh();
       }
     }
@@ -676,8 +693,4 @@ export class Builder {
     });
     this.refresh();
   }
-}
-
-function round2(v) {
-  return Math.round(v * 100) / 100;
 }

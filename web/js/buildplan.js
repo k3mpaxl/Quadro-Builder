@@ -8,7 +8,7 @@
 
 import { inferConnectorType, connectorsForNode } from "./bom.js";
 import { getTube, getConnector, getPanel, colorName, partName } from "./catalog.js";
-import { getLang } from "./i18n.js";
+import { getLang, t } from "./i18n.js";
 
 const Y_EPS = 0.6; // cm: Knoten innerhalb dieser Hoehe gelten als gleiche Ebene
 
@@ -185,8 +185,8 @@ export function computeBuildPlan(model) {
     if (nodes.length || horiz.length || pans.length || txs.length || sls.length) {
       const conn = countConnectors(model, nodes);
       const title = i === 0
-        ? `Bodenebene – Rahmen (${round1(levels[i])} cm)`
-        : `Ebene ${i + 1} – Rahmen (${round1(levels[i])} cm)`;
+        ? t("buildplan_ground_frame", round1(levels[i]))
+        : t("buildplan_level_frame", i + 1, round1(levels[i]));
       steps.push({
         kind: "frame", title, level: i, y: levels[i],
         connectors: conn.rows, openEnds: conn.openEnds,
@@ -204,7 +204,7 @@ export function computeBuildPlan(model) {
     if (risers.length) {
       steps.push({
         kind: "risers",
-        title: `Ebene ${i + 1} → ${i + 2} – Stützen`,
+        title: t("buildplan_risers", i + 1, i + 2),
         level: i, y: levels[i],
         connectors: [], openEnds: 0,
         tubes: countTubes(risers), panels: [],

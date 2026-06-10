@@ -1,6 +1,7 @@
 // Stueckliste (BOM) + Kupplungstyp-Heuristik + Bestands-/Machbarkeitscheck.
 
 import { getTube, getConnector, getPanel, colorName, partName, reinforcementPart, reinforcementRunName } from "./catalog.js";
+import { round2 } from "./util.js";
 
 // Einheitsvektoren der Nachbarn eines Knotens. Doppelrohr-Verbindungen (link)
 // sind KEIN Arm der Kupplung und zaehlen nicht in die Kupplungstyp-Heuristik
@@ -362,8 +363,4 @@ export function compareInventory(bom, inv) {
     rows.push({ group: "reinforcements", key: id, name: partName(def), need: count, owned, ok });
   }
   return { rows, feasible };
-}
-
-function round2(v) {
-  return Math.round(v * 100) / 100;
 }

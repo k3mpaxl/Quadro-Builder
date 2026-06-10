@@ -24,6 +24,8 @@
 //
 // Bewusst ohne Three.js/DOM, damit per Node testbar und Backend-tauglich.
 
+import { round2 as round } from "./util.js";
+
 // Alle benannten Richtungen (kardinal + 45°-diagonal) fuer Arm-Erkennung.
 const S45 = Math.SQRT1_2;
 const ALL_NAMED_DIRS = [
@@ -654,7 +656,4 @@ export function parseQDF(text, opts = {}) {
 
 function tubeExists(tubes, a, b) {
   return tubes.some((t) => (t.a === a && t.b === b) || (t.a === b && t.b === a));
-}
-function round(v) {
-  return Math.round(v * 100) / 100;
 }

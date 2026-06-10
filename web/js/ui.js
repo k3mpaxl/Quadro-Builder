@@ -1,6 +1,6 @@
 // Verkabelt die Bedienoberflaeche (Toolbar, Tastatur, Stueckliste, Bestand).
 
-import { buildableTubes, buildablePanels, tubeColors, geometry, allTubes, allConnectors, panels, reinforcements } from "./catalog.js";
+import { buildableTubes, buildablePanels, tubeColors, geometry, allTubes, allConnectors, panels, reinforcements, slideKindName } from "./catalog.js";
 import { computeBOM, compareInventory } from "./bom.js";
 import { computeBuildPlan } from "./buildplan.js";
 import { parseQDF } from "./qdfimport.js";
@@ -77,8 +77,8 @@ export function initUI({ scene, model, builder }) {
   builder.onNotice = (msg) => flash(msg);
   builder.onHistoryChange = () => updateUndoButton();
   function updateUndoButton() {
-    const off = !builder.canUndo();
-    $("btn-undo").disabled = off;
+    $("btn-undo").disabled = !builder.canUndo();
+    $("btn-redo").disabled = !builder.canRedo();
   }
 
   // --- Autosave-Anzeige --------------------------------------------------
@@ -363,6 +363,7 @@ export function initUI({ scene, model, builder }) {
 
   // --- Aktionen ----------------------------------------------------------
   $("btn-undo").addEventListener("click", () => builder.undo());
+  $("btn-redo").addEventListener("click", () => builder.redo());
   const camBtn = $("btn-camera");
   if (camBtn) camBtn.addEventListener("click", () => scene.resetCamera());
   $("btn-clear").addEventListener("click", () => {
@@ -393,7 +394,9 @@ export function initUI({ scene, model, builder }) {
           mergeEps: 2,
         });
         if (!data.nodes.length) throw new Error(t("qdf_no_parts"));
-        builder.recordHistory(() => model.loadJSON(data));
+        let loadRes;
+        builder.recordHistory(() => { loadRes = model.loadJSON(data); });
+        if (!loadRes.ok) throw new Error(t(loadRes.reason === "format" ? "load_error_format" : "load_error_data"));
         builder.selectedNodeId = null;
         builder.refresh();
         scene.resetCamera();
@@ -408,7 +411,9 @@ export function initUI({ scene, model, builder }) {
         info = t("qdf_imported", stats, skipTxt);
       } else {
         const data = await storage.importFile(f);
-        builder.recordHistory(() => model.loadJSON(data));
+        let loadRes;
+        builder.recordHistory(() => { loadRes = model.loadJSON(data); });
+        if (!loadRes.ok) throw new Error(t(loadRes.reason === "format" ? "load_error_format" : "load_error_data"));
         builder.selectedNodeId = null;
         builder.refresh();
         info = t("flash_imported_json");
@@ -417,18 +422,31 @@ export function initUI({ scene, model, builder }) {
       // Staende erhalten bleiben; auf diesem Entwurf wird weitergearbeitet.
       const base = f.name.replace(/\.[^.]+$/, "").trim() || "Import";
       const draftName = `${base} ${importStamp()}`;
-      storage.saveNamed(draftName, model.toJSON());
-      refreshSavedList();
-      $("load-select").value = draftName;
-      flash(`${info} · ${t("flash_import_draft", draftName)}`);
-    } catch (err) { alert(err.message); }
+      try {
+        storage.saveNamed(draftName, model.toJSON());
+        refreshSavedList();
+        $("load-select").value = draftName;
+        flash(`${info} · ${t("flash_import_draft", draftName)}`);
+      } catch (err) {
+        // Import selbst war erfolgreich (das Modell ist geladen) – nur die
+        // zusaetzliche Entwurfs-Sicherung ist fehlgeschlagen.
+        flash(`${info} · ${err.name === "QuotaError" ? t("flash_save_quota") : t("flash_save_failed", err.message)}`);
+      }
+    } catch (err) {
+      alert(err.name === "QuotaError" ? t("flash_save_quota") : err.message);
+    }
     e.target.value = "";
   });
 
   $("btn-save").addEventListener("click", () => {
     const name = prompt(t("prompt_save_name"));
     if (!name) return;
-    storage.saveNamed(name, model.toJSON());
+    try {
+      storage.saveNamed(name, model.toJSON());
+    } catch (err) {
+      flash(err.name === "QuotaError" ? t("flash_save_quota") : t("flash_save_failed", err.message));
+      return;
+    }
     refreshSavedList();
     $("load-select").value = name;
     toggleFileMenu(false);
@@ -439,7 +457,13 @@ export function initUI({ scene, model, builder }) {
     if (!name) return;
     const data = storage.loadNamed(name);
     if (!data) return;
-    builder.recordHistory(() => model.loadJSON(data));
+    let loadRes;
+    builder.recordHistory(() => { loadRes = model.loadJSON(data); });
+    if (!loadRes.ok) {
+      flash(t(loadRes.reason === "format" ? "load_error_format" : "load_error_data"));
+      toggleFileMenu(false);
+      return;
+    }
     builder.selectedNodeId = null;
     builder.refresh();
     toggleFileMenu(false);
@@ -625,7 +649,9 @@ export function initUI({ scene, model, builder }) {
   function flash(msg) {
     $("status").textContent = msg;
     clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => setMode(builder.mode), 2500);
+    flashTimer = setTimeout(() => {
+      $("status").textContent = "";
+    }, 2500);
   }
 
   // --- Tastatur ----------------------------------------------------------
@@ -635,7 +661,13 @@ export function initUI({ scene, model, builder }) {
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
       e.preventDefault();
-      builder.undo();
+      if (e.shiftKey) builder.redo();
+      else builder.undo();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      builder.redo();
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -716,14 +748,6 @@ export function initUI({ scene, model, builder }) {
     container.appendChild(row);
   }
 
-  // Rutschen/Dach-Art -> i18n-Name.
-  function slideName(kind) {
-    const map = {
-      "slide2": "slide_slide", "slide-new2": "slide_slide", "slide-end2": "slide_end",
-      "curved-slide2": "slide_curved", "roof2": "slide_roof",
-    };
-    return t(map[kind] || "slide_slide");
-  }
 
   function update() {
     const bom = computeBOM(model);
@@ -755,7 +779,7 @@ export function initUI({ scene, model, builder }) {
     const slb = $("bom-slides"); slb.innerHTML = "";
     const slides = bom.slides || [];
     if (slides.length === 0) slb.appendChild(el("div", "muted", "–"));
-    for (const r of slides) bomRow(slb, slideName(r.kind), null, r.count, null);
+    for (const r of slides) bomRow(slb, slideKindName(r.kind), null, r.count, null);
 
     const rb = $("bom-reinforcements"); rb.innerHTML = "";
     const reinf = bom.reinforcements || [];

@@ -7,6 +7,23 @@ import { AUTOSAVE_KEY } from "./config.js";
 const INDEX_KEY = "quadro.designs.index.v1";
 const PREFIX = "quadro.design.v1.";
 
+// Wird geworfen, wenn localStorage voll ist (QuotaExceededError o.ae.).
+// Eigene Klasse statt der DOMException, damit Aufrufer (UI-Schicht) den Fall
+// unabhaengig vom Browser sauber erkennen und uebersetzen koennen, ohne dass
+// dieses Modul i18n importieren muss.
+export class QuotaError extends Error {
+  constructor(cause) {
+    super("Storage quota exceeded");
+    this.name = "QuotaError";
+    this.cause = cause;
+  }
+}
+
+function isQuotaError(e) {
+  return e instanceof DOMException &&
+    (e.code === 22 || e.code === 1014 || e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED");
+}
+
 export function autosave(data) {
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(data));
@@ -33,12 +50,22 @@ export function listNames() {
 export function saveNamed(name, data) {
   name = (name || "").trim();
   if (!name) throw new Error("Bitte einen Namen angeben");
-  localStorage.setItem(PREFIX + name, JSON.stringify(data));
+  try {
+    localStorage.setItem(PREFIX + name, JSON.stringify(data));
+  } catch (e) {
+    if (isQuotaError(e)) throw new QuotaError(e);
+    throw e;
+  }
   const names = listNames();
   if (!names.includes(name)) {
     names.push(name);
     names.sort((a, b) => a.localeCompare(b, "de"));
-    localStorage.setItem(INDEX_KEY, JSON.stringify(names));
+    try {
+      localStorage.setItem(INDEX_KEY, JSON.stringify(names));
+    } catch (e) {
+      if (isQuotaError(e)) throw new QuotaError(e);
+      throw e;
+    }
   }
   return true;
 }

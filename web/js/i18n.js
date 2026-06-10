@@ -25,6 +25,8 @@ const de = {
   btn_undo: '↶ Zurück',
   btn_undo_short: 'Zurück',
   btn_undo_title: 'Rückgängig (Strg/Cmd+Z)',
+  btn_redo_short: 'Wieder',
+  btn_redo_title: 'Wiederholen (Strg/Cmd+Shift+Z)',
   btn_camera: '↺ Ansicht',
   btn_camera_title: 'Ansicht zurücksetzen (C)',
   btn_grass: '🌿 Szene',
@@ -110,6 +112,17 @@ const de = {
   status_assembly: 'Aufbau: mit ‹ › oder Pfeiltasten Schritt für Schritt durch den Bauplan.',
   status_delete: 'Löschen: Rohr, Kupplung oder Platte anklicken.',
 
+  // Hinweise aus dem Builder (onNotice)
+  notice_collision: 'Hier liegt schon ein Rohr – kein Platz.',
+  notice_no_free_arm: 'Kein freier Arm für die Winkelkupplung – hier nicht möglich.',
+  notice_clamp_placed: 'Doppelrohrverbinder gesetzt – grüner Punkt: zweites Rohr.',
+  notice_second_tube_placed: 'Zweites Rohr im Doppelrohrverbinder gesetzt.',
+  notice_reinforce_added: 'Verstärkung hinzugefügt.',
+  notice_reinforce_removed: 'Verstärkung entfernt.',
+  notice_clamp_removed: 'Doppelrohrverbinder entfernt.',
+  notice_clamp_click_tube: 'Auf ein Rohr klicken, um einen Doppelrohrverbinder zu setzen.',
+  notice_color_changed: 'Farbe geändert.',
+
   // Flash-Meldungen (Funktionen für Vorlagen)
   flash_hints_n: (n) => `${n} Rohr(e) könnten ein Alu-Profil gebrauchen (orange).`,
   flash_hints_0: 'Keine frei tragenden Ebenen gefunden.',
@@ -176,6 +189,19 @@ const de = {
   // Bestandsdatei
   inv_invalid: 'Bestand-Datei ist ungültig.',
 
+  // Laden/Importieren von Modell-Daten
+  load_error_data: 'Datei enthält kein gültiges Modell.',
+  load_error_format: 'Unbekanntes Speicherformat – Datei kann nicht geladen werden.',
+
+  // Speichern
+  flash_save_quota: 'Speicher voll – Entwurf konnte nicht gespeichert werden. Bitte alte Entwürfe löschen.',
+  flash_save_failed: (msg) => `Speichern fehlgeschlagen: ${msg}`,
+
+  // Aufbauplan: Schritt-Titel
+  buildplan_ground_frame: (h) => `Bodenebene – Rahmen (${h} cm)`,
+  buildplan_level_frame: (level, h) => `Ebene ${level} – Rahmen (${h} cm)`,
+  buildplan_risers: (from, to) => `Ebene ${from} → ${to} – Stützen`,
+
   // Sprach-Toggle
   lang_toggle_title: 'Sprache wechseln / Switch language',
 };
@@ -203,6 +229,8 @@ const en = {
   btn_undo: '↶ Undo',
   btn_undo_short: 'Undo',
   btn_undo_title: 'Undo (Ctrl/Cmd+Z)',
+  btn_redo_short: 'Redo',
+  btn_redo_title: 'Redo (Ctrl/Cmd+Shift+Z)',
   btn_camera: '↺ View',
   btn_camera_title: 'Reset camera (C)',
   btn_grass: '🌿 Scene',
@@ -288,6 +316,17 @@ const en = {
   status_assembly: 'Assembly: use ‹ › or arrow keys to step through the build plan.',
   status_delete: 'Delete: click a tube, connector or panel.',
 
+  // Notices from the builder (onNotice)
+  notice_collision: 'There is already a tube here – no room.',
+  notice_no_free_arm: 'No free arm for the angle connector – not possible here.',
+  notice_clamp_placed: 'Double-tube connector placed – green dot: second tube.',
+  notice_second_tube_placed: 'Second tube placed in the double-tube connector.',
+  notice_reinforce_added: 'Reinforcement added.',
+  notice_reinforce_removed: 'Reinforcement removed.',
+  notice_clamp_removed: 'Double-tube connector removed.',
+  notice_clamp_click_tube: 'Click a tube to place a double-tube connector.',
+  notice_color_changed: 'Colour changed.',
+
   // Flash messages
   flash_hints_n: (n) => `${n} tube(s) could use an aluminium profile (orange).`,
   flash_hints_0: 'No free-spanning levels found.',
@@ -353,6 +392,19 @@ const en = {
 
   // Inventory file
   inv_invalid: 'Inventory file is invalid.',
+
+  // Loading/importing model data
+  load_error_data: 'File does not contain a valid model.',
+  load_error_format: 'Unknown save format – file cannot be loaded.',
+
+  // Saving
+  flash_save_quota: 'Storage full – design could not be saved. Please delete old drafts.',
+  flash_save_failed: (msg) => `Save failed: ${msg}`,
+
+  // Build plan: step titles
+  buildplan_ground_frame: (h) => `Ground level – frame (${h} cm)`,
+  buildplan_level_frame: (level, h) => `Level ${level} – frame (${h} cm)`,
+  buildplan_risers: (from, to) => `Level ${from} → ${to} – uprights`,
 
   // Language toggle
   lang_toggle_title: 'Sprache wechseln / Switch language',

@@ -28,6 +28,23 @@ export const DIAGONAL_DIRECTIONS = [
 // Toleranz (cm), innerhalb der zwei Knoten als identisch gelten und verschmelzen.
 export const MERGE_EPS = 0.5;
 
+// Cosinus-Schwelle, ab der zwei Richtungsvektoren als "praktisch identisch"
+// gelten (~8°). Genutzt fuer Belegungs-/Ausrichtungspruefungen entlang
+// kardinaler/diagonaler Richtungen (builder.js).
+export const DIR_ALIGN_TOL = 0.99;
+
+// Lockerere Cosinus-Schwelle (~23°) fuer Arm-Richtungen rotierter Kupplungen
+// (armDirs aus QDF-Import), die nicht exakt kardinal/diagonal ausgerichtet sind.
+export const ARM_ALIGN_TOL = 0.92;
+
+// Toleranz (cm) beim Andocken an eine vorhandene Schräg-Kupplung
+// (extendDiagonalSnap in model.js).
+export const DIAGONAL_SNAP_TOL = 3;
+
+// Max. Abstand (cm), bis zu dem ein Knoten beim Setzen eines zweiten Rohrs im
+// Doppelrohrverbinder noch mit seinem Nachbarn verlinkt wird (builder.js).
+export const CLAMP_LINK_DIST = 7;
+
 // Schluessel fuer den automatischen Zwischenspeicher.
 export const AUTOSAVE_KEY = "quadro.autosave.v1";
 

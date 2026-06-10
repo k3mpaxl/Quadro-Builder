@@ -115,3 +115,23 @@ export function gridSpacing() {
 export function diagonalTubeId() {
   return geometry().diagonalTube || "T52";
 }
+
+// Rutschen/Dach-Art -> i18n-Schluessel. Einziger Ort, der die QDF-"kind"-Werte
+// kennt (slide2, slide-new2, ...) -> spaeter leicht erweiterbar.
+const SLIDE_KIND_KEYS = {
+  "slide2": "slide_slide", "slide-new2": "slide_slide", "slide-end2": "slide_end",
+  "curved-slide2": "slide_curved", "roof2": "slide_roof",
+};
+
+// Anzeigename einer Rutsche/eines Dachs (BOM/Stueckliste): unbekannte Arten
+// fallen auf "Rutsche" zurueck.
+export function slideKindName(kind) {
+  return t(SLIDE_KIND_KEYS[kind] || "slide_slide");
+}
+
+// Beschriftungstext fuer die 3D-Ansicht: liefert null bei unbekannter Art
+// (dann wird keine Beschriftung angezeigt).
+export function slideKindLabel(kind) {
+  const key = SLIDE_KIND_KEYS[kind];
+  return key ? t(key) : null;
+}

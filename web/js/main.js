@@ -22,7 +22,10 @@ async function boot() {
 
   // Letzten Stand wiederherstellen
   const saved = loadAutosave();
-  if (saved) model.loadJSON(saved);
+  if (saved) {
+    const res = model.loadJSON(saved);
+    if (!res.ok) console.warn("Autosave konnte nicht geladen werden:", res.reason);
+  }
 
   const builder = new Builder(scene, model, { onChange: () => {} });
   const ui = initUI({ scene, model, builder });

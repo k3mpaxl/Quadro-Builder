@@ -1,7 +1,8 @@
 // Datenmodell des Bauwerks: Graph aus Knoten (Kupplungen) und Kanten (Rohren).
 // Bewusst ohne Three.js-Abhaengigkeit, damit es testbar und Backend-tauglich bleibt.
 
-import { MERGE_EPS, FORMAT_VERSION } from "./config.js";
+import { MERGE_EPS, FORMAT_VERSION, DIAGONAL_SNAP_TOL } from "./config.js";
+import { round2 as round } from "./util.js";
 
 function dist2(a, b) {
   const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
@@ -365,7 +366,7 @@ export class BuildModel {
   // ~41 cm statt 40), wird grosszuegig daran angeschlossen -> nach Loeschen+
   // Neusetzen werden die Rohre wieder sauber zusammengefuehrt. Kein C45-Adapter
   // (die Kupplung ist bereits 45-Grad gedreht).
-  extendDiagonalSnap(fromId, dir, tubeId, color, length, spacing, snapTol = 3) {
+  extendDiagonalSnap(fromId, dir, tubeId, color, length, spacing, snapTol = DIAGONAL_SNAP_TOL) {
     const from = this.nodes.get(fromId);
     if (!from) return null;
     const tx = from.x + dir[0] * spacing, ty = from.y + dir[1] * spacing, tz = from.z + dir[2] * spacing;
@@ -439,15 +440,33 @@ export class BuildModel {
     };
   }
 
+  // Laedt ein gespeichertes/importiertes Modell. Liefert { ok, reason }, damit
+  // die UI-Schicht eine passende (uebersetzte) Meldung anzeigen kann, statt
+  // ein kaputtes Modell still zu uebernehmen oder den Aufrufer abstuerzen zu
+  // lassen. reason ist einer von: "format" (unbekannte/zu neue Version),
+  // "data" (kein Objekt / nodes fehlt oder kein Array).
   loadJSON(data) {
+    if (!data || typeof data !== "object" || !Array.isArray(data.nodes)) {
+      return { ok: false, reason: "data" };
+    }
+    // Aeltere Speicherstaende ohne "format"-Feld gelten als Version 1
+    // (Legacy) und werden weiter akzeptiert; nur eine abweichende, bekannte
+    // Versionsnummer wird abgelehnt.
+    if (data.format != null && data.format !== FORMAT_VERSION) {
+      return { ok: false, reason: "format" };
+    }
     this.clear();
-    if (!data || !Array.isArray(data.nodes)) return;
     let maxSeq = 0;
     for (const n of data.nodes) {
       this.nodes.set(n.id, { id: n.id, x: n.x, y: n.y, z: n.z, c45: !!n.c45, c45body: !!n.c45body, c45axis: n.c45axis || null, armDirs: n.armDirs || null, arms: n.arms || null, quat: n.quat || null });
       maxSeq = Math.max(maxSeq, parseSeq(n.id));
     }
     for (const t of data.tubes || []) {
+      if (!t.a || !t.b) continue;
+      if (!this.nodes.has(t.a) || !this.nodes.has(t.b)) {
+        console.warn(`Ungültiges Rohr: Knoten ${t.a} oder ${t.b} existiert nicht.`);
+        continue;
+      }
       this.tubes.set(t.id, {
         id: t.id, a: t.a, b: t.b, tubeId: t.tubeId, color: t.color, length: t.length,
         reinforced: !!t.reinforced, arm: !!t.arm, link: !!t.link,
@@ -455,6 +474,7 @@ export class BuildModel {
       maxSeq = Math.max(maxSeq, parseSeq(t.id));
     }
     for (const p of data.panels || []) {
+      if (!p.nodes || !Array.isArray(p.nodes)) continue;
       this.panels.set(p.id, {
         id: p.id, nodes: p.nodes.slice(), panelId: p.panelId, color: p.color,
       });
@@ -476,11 +496,8 @@ export class BuildModel {
       maxSeq = Math.max(maxSeq, parseSeq(s.id));
     }
     this._seq = maxSeq + 1;
+    return { ok: true };
   }
-}
-
-function round(v) {
-  return Math.round(v * 100) / 100;
 }
 
 // Ueberlappen sich die Strecken p1->p2 und p3->p4 kollinear mit Laenge > eps?
