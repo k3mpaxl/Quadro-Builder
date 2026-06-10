@@ -257,47 +257,63 @@ export class SceneManager {
     return new THREE.Vector3(se.x, se.y + 12, se.z);
   }
 
-  // U-Rinnen-Querschnitt EINES Rutschen-Segments: flacher Rutschboden + 2 deutlich
-  // hochgezogene Seitenwangen (Gregor: "wie eine Rinne, links/rechts steigen die
-  // Seitenraender deutlich hoch"). T=Laenge, Nrm=Flaechennormale(oben), W=Breite.
-  _addSlideSegment(mat, st, id, mid, T, Nrm, W, segLen) {
-    const width = 35, floor = 1.6, wallH = 11, wallT = 2.6;
-    const basis = new THREE.Matrix4().makeBasis(T, Nrm, W);
-    const add = (l, h, d, offW, offN) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(l, h, d), mat);
-      mesh.quaternion.setFromRotationMatrix(basis);
-      mesh.position.copy(mid).addScaledVector(W, offW).addScaledVector(Nrm, offN);
-      mesh.userData = { kind: "slide", id };
-      this.buildGroup.add(mesh);
-      if (st !== "future") this.pickSlides.push(mesh);
-    };
-    add(segLen, floor, width, 0, 0);                                  // Rutschboden
-    add(segLen, wallH, wallT, width / 2 - wallT / 2, wallH / 2);      // Seitenwange rechts
-    add(segLen, wallH, wallT, -(width / 2 - wallT / 2), wallH / 2);   // Seitenwange links
-  }
-
-  // Legt einen Rutschenkoerper als U-Rinne entlang einer Bahn bez(t)∈[0,1] an.
-  // Breitenachse pro Segment = T×up (Flaeche faellt mit der Bahn, Rinne folgt
-  // Kurve/Twist; ~senkrechte Segmente behalten die vorige Achse, kein Vorzeichen-Flip).
-  _addSlideAlongCurve(mat, st, id, bez, SEG) {
-    const up = new THREE.Vector3(0, 1, 0);
-    let prev = bez(0), prevW = null;
-    for (let i = 1; i <= SEG; i++) {
-      const cur = bez(i / SEG);
-      const T = cur.clone().sub(prev);
-      const segLen = T.length();
-      if (segLen < 0.01) { prev = cur; continue; }
-      T.normalize();
-      let W = new THREE.Vector3().crossVectors(T, up);
-      if (W.lengthSq() < 0.02) W = prevW ? prevW.clone() : new THREE.Vector3(1, 0, 0);
-      W.normalize();
-      if (prevW && W.dot(prevW) < 0) W.negate();
-      prevW = W;
-      const Nrm = new THREE.Vector3().crossVectors(W, T).normalize();
-      const mid = prev.clone().add(cur).multiplyScalar(0.5);
-      this._addSlideSegment(mat, st, id, mid, T, Nrm, W, segLen * 1.06);
-      prev = cur;
+  // Legt einen Rutschenkoerper als EINE durchgehende U-Rinne (Boden + 2 hochgezogene
+  // Seitenwangen, als zusammenhaengender Flaechenstreifen) entlang einer Bahn
+  // bez(t)∈[0,1] an. Ersetzt die fruehere Kette einzelner Box-Segmente, deren Kanten
+  // an den Uebergaengen sichtbare "Stufen"/Rippen erzeugten (Gregor: "die Übergänge
+  // sind nicht schön", "die curved slide ist noch nicht schön"). Querschnitt je
+  // Stuetzstelle: Wange-links-oben, Boden-links, Boden-rechts, Wange-rechts-oben.
+  // Breitenachse W = T×up (faellt die Bahn, dreht sich die Rinne mit; ~senkrechte
+  // Abschnitte behalten die vorige Achse -- kein Vorzeichen-Flip = kein Verdrehen).
+  // startFrame={W,Nrm}: optional -- erzwingt den ERSTEN Querschnitt (z.B. exakt der
+  // LETZTE Querschnitt des Vorgaengerteils), damit zwei Rutschenteile am gemeinsamen
+  // Punkt OHNE Spalt/Knick im Querschnitt ineinander uebergehen ("Übergänge"-Fix).
+  // Rueckgabe: {W,Nrm} des LETZTEN Querschnitts, fuer das naechste Teil der Kette.
+  _addSlideAlongCurve(mat, st, id, bez, SEG, startFrame) {
+    const halfW = 35 / 2, wallH = 11;
+    const N = SEG + 1, eps = 0.5 / SEG;
+    const verts = [];
+    let prevW = startFrame ? startFrame.W.clone() : null;
+    let lastW = prevW, lastNrm = startFrame ? startFrame.Nrm.clone() : null;
+    for (let i = 0; i < N; i++) {
+      const t = i / SEG;
+      const c = bez(t);
+      let W, Nrm;
+      if (i === 0 && startFrame) {
+        W = startFrame.W.clone(); Nrm = startFrame.Nrm.clone();
+      } else {
+        const t0 = Math.max(0, t - eps), t1 = Math.min(1, t + eps);
+        const T = bez(t1).sub(bez(t0));
+        if (T.lengthSq() < 1e-8) T.set(1, 0, 0); else T.normalize();
+        W = new THREE.Vector3().crossVectors(T, UP);
+        if (W.lengthSq() < 0.02) W = prevW ? prevW.clone() : new THREE.Vector3(1, 0, 0);
+        W.normalize();
+        if (prevW && W.dot(prevW) < 0) W.negate();
+        Nrm = new THREE.Vector3().crossVectors(W, T).normalize();
+      }
+      prevW = W; lastW = W; lastNrm = Nrm;
+      const fl = c.clone().addScaledVector(W, -halfW);
+      const fr = c.clone().addScaledVector(W, halfW);
+      verts.push(fl.clone().addScaledVector(Nrm, wallH), fl, fr, fr.clone().addScaledVector(Nrm, wallH));
     }
+    const positions = [];
+    for (const v of verts) positions.push(v.x, v.y, v.z);
+    const idx = [];
+    for (let i = 0; i < N - 1; i++) {
+      const r0 = i * 4, r1 = r0 + 4;
+      for (let k = 0; k < 3; k++) {
+        idx.push(r0 + k, r1 + k, r0 + k + 1,  r0 + k + 1, r1 + k, r1 + k + 1);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData = { kind: "slide", id };
+    this.buildGroup.add(mesh);
+    if (st !== "future") this.pickSlides.push(mesh);
+    return { W: lastW.clone(), Nrm: lastNrm.clone() };
   }
 
   // FESTE Austrittsrichtung einer Bogenrutsche (identisch zur Berechnung in
@@ -371,15 +387,19 @@ export class SceneManager {
     const exitDir = exitH.multiplyScalar(1.4).add(new THREE.Vector3(0, -1, 0)).normalize();
     const span = P0.distanceTo(P3) || 1;
     const C2 = P3.clone().addScaledVector(exitDir, -span * 0.45);
+    // ECHTE kubische Bézier (P0,C1,C2,P3) -- vorher war C2 unbenutzt (quadratisch),
+    // dadurch hatte der Bogen keine eigene Austrittsrichtung am Ende (Knick/unschoen).
     const bez = (t) => {
-      const u = 1 - t;
+      const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
       return new THREE.Vector3(
-        u * u * P0.x + 2 * u * t * C1.x + t * t * P3.x,
-        u * u * P0.y + 2 * u * t * C1.y + t * t * P3.y,
-        u * u * P0.z + 2 * u * t * C1.z + t * t * P3.z);
+        a * P0.x + b * C1.x + c * C2.x + d * P3.x,
+        a * P0.y + b * C1.y + c * C2.y + d * P3.y,
+        a * P0.z + b * C1.z + c * C2.z + d * P3.z);
     };
     // Bananenfoermiger, durchgehend gebogener Rinnenkoerper entlang der Bézier.
-    this._addSlideAlongCurve(mat, st, sl.id, bez, 16);
+    const hint = this._slideChainNextId === sl.id ? this._slideChainFrame : null;
+    this._slideChainFrame = this._addSlideAlongCurve(mat, st, sl.id, bez, 24, hint);
+    this._slideChainNextId = target ? target.id : null;
   }
 
   // Nicht-achsparallele Richtungen der Rohre an einem Knoten.
@@ -1021,6 +1041,10 @@ export class SceneManager {
 
     // Rutschen/Daecher: eigene Geometrie je Art (Bogen/gerade/Auslauf = U-Rinne,
     // Dach = flache Kappe). slide-end2-Position via _slideEndRenderedCenter.
+    // Ketten-Status fuer nahtlose Uebergaenge: der Querschnitt (W/Nrm), mit dem das
+    // VORHERIGE Rutschenteil endete, plus die ID des Teils, das ihn uebernehmen soll.
+    this._slideChainFrame = null;
+    this._slideChainNextId = null;
     for (const sl of (model.slides ? model.slides.values() : [])) {
       if (reinforce) continue;
       const st = stateOf(sl.id);
@@ -1086,7 +1110,7 @@ export class SceneManager {
       if (fwd.lengthSq() < 0.01) fwd.set(1, 0, 0); fwd.normalize();
       P1 = P0.clone().addScaledVector(fwd, 130).add(new THREE.Vector3(0, -60, 0));
     }
-    if (P0.distanceTo(P1) < 1) return;
+    if (P0.distanceTo(P1) < 1) { this._slideChainFrame = null; this._slideChainNextId = null; return; }
     // Plan-Verlauf GERADE (Kontrollpunkt horizontal mittig), aber Seitenprofil
     // leicht KONKAV (Gregor: "oben steiler angesetzt, unten flacher auslaufend"):
     // Kontrollpunkt auf ~1/3-Hoehe -> steiler Einstieg oben, flacheres Ende unten.
@@ -1099,7 +1123,9 @@ export class SceneManager {
         u * u * P0.z + 2 * u * t * C.z + t * t * P1.z);
     };
     // U-Rinne mit hohen Seitenwangen entlang der leicht gebogenen Rampe.
-    this._addSlideAlongCurve(mat, st, sl.id, bez, 9);
+    const hint = this._slideChainNextId === sl.id ? this._slideChainFrame : null;
+    this._slideChainFrame = this._addSlideAlongCurve(mat, st, sl.id, bez, 9, hint);
+    this._slideChainNextId = target ? target.id : null;
   }
 
   // Rutschenauslauf (Endstueck): kurzes, FLACHES U-Rinnen-Stueck. Hinten (am
@@ -1146,7 +1172,9 @@ export class SceneManager {
         a * P0.y + b * C1.y + c * C2.y + e * front.y,
         a * P0.z + b * C1.z + c * C2.z + e * front.z);
     };
-    this._addSlideAlongCurve(mat, st, sl.id, bez, 7);
+    const hint = this._slideChainNextId === sl.id ? this._slideChainFrame : null;
+    this._slideChainFrame = this._addSlideAlongCurve(mat, st, sl.id, bez, 7, hint);
+    this._slideChainNextId = null; // Endstueck: Kette stoppt hier.
   }
 
   // Dach-Tuch (roof2) als GIEBEL: findet First (hoechste Knoten nahe roof2) + die
