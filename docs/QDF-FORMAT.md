@@ -1,0 +1,920 @@
+# The QDF file format
+
+`.qdf` is the native format of **QUADRO 3D**, the Windows planning software (the binary at hand is `Quadro.exe`, build date 2006). No
+specification was ever published. What follows is reconstructed — it is good
+enough to read and write files that the original software accepts, but it is
+not authoritative, and some fields are still a mystery.
+
+Corrections are welcome. If you own files that use elements listed here as
+"never seen", they would be very useful.
+
+---
+
+## 1. Where this knowledge comes from
+
+Three sources, in descending order of reliability:
+
+1. **Behaviour of the original software.** Files written by
+   [`qdfexport.js`](web/js/qdfexport.js) load in QUADRO 3D and show the model
+   as intended. Everything needed to achieve that is proven by construction —
+   including a few things that are easy to get wrong, such as the quaternion
+   scale (§3.2): with the wrong factor the software draws a completely
+   scrambled model instead of refusing the file.
+2. **A corpus of 239 files** — the example models shipped with the software
+   plus files saved by it and by this app. Statements like "always" or "only
+   two values occur" below refer to that corpus.
+3. **The binary itself.** `Quadro.exe` contains a table of all element
+   keywords (§4). It tells us which elements *exist*, not what their fields
+   mean.
+4. **What the software draws**, captured from its OpenGL stream under Wine
+   (`tmp/extracted/`). This settles questions the corpus cannot: whether a
+   field changes the geometry, which mask belongs to which product, whether an
+   element is drawn at all.
+
+One rule for such experiments, learned the hard way: put a **control element**
+(a plain `tube2`) into every probe file. A single malformed line makes the
+software reject the **whole file** without a word — without the control you
+cannot tell "element not drawn" from "file not read".
+
+The other direction is stronger still: **let the software write the file.**
+`Ctrl+S` saves in place, so a dialog value or an editing action can be typed
+in, saved, and read straight back out of the QDF. That is how `camera2` (§5.7)
+was decoded — set every box to a distinct number, save, compare.
+
+### Confidence levels
+
+Every field table below marks each field:
+
+| Mark | Meaning |
+|---|---|
+| **✔** | **Confirmed** — proven by the software accepting our files, or without a single exception in the corpus. |
+| **~** | **Assumed** — consistent with everything we have seen and it explains the data, but not proven. |
+| **?** | **Unknown** — the field is there, its meaning is open. |
+
+---
+
+## 2. File layout
+
+A QDF file is plain text, CRLF line endings, one statement per line:
+
+```
+0, 0;
+material3{1,"black", 1, 1.,1.,1., 0.,0.,1.,7.5, 0.,0.,0.,7.5, "", 0}
+connector3{1, {4., 0., 0., 0., 0., 0., 0.}, 1, 0, 0, 63, 4095, 0}
+tube2{2, {4., 0., 0., 0., 0., 0., 0.}, 1, 350., 0., 0}
+```
+
+- **Header line** — two identical numbers followed by `;`. 235 of the 239
+  files carry `0, 0;`. The four exceptions carry the number of *editing
+  steps* the file remembers (§3.5): a file with `1085, 1085;` has step
+  numbers up to 1083 in it. **~**
+- **Statement** — `name{ field, field, … }`. Fields are separated by `, `.
+  One field may itself be a brace group — the placement tuple (§3.1).
+- **Numbers** — whole values are written with a trailing dot (`350.`),
+  fractions in full (`-2200.000000000004`). Integers used as flags or masks
+  have no dot (`1`, `4095`).
+- **Strings** — double quoted, only in `material3`.
+- **Units** — millimetres, y is up, right-handed. The build grid is 400 mm
+  (a 35 cm tube plus a 5 cm connector).
+- **Order** — materials first, then parts. Within the parts the software
+  writes connectors before tubes, but nothing depends on the order: our
+  importer reads the file in several passes and the original software accepts
+  our output, which uses a different order again.
+- Anything **this app's** reader does not recognise is skipped: unknown element
+  names, extra fields at the end of a line and `camera2` lines all pass through
+  harmlessly.
+- **The original software is not that forgiving.** A line with the wrong number
+  of fields makes it throw the whole file away — silently, with an empty
+  document and no message. Tested on `clip2`: four or seven fields kill the
+  file, five and six are accepted. Anyone writing QDF should keep a known-good
+  element in the file while experimenting (§1). **✔**
+
+---
+
+## 3. Building blocks
+
+### 3.1 The placement tuple
+
+Nearly every element carries one brace group of seven numbers:
+
+```
+{q0, q1, q2, q3, x, y, z}
+```
+
+`q0..q3` is an encoded quaternion (§3.2), `x, y, z` is the anchor point in
+millimetres. **✔**
+
+What the anchor point *is* differs per element and is the single most
+error-prone part of the format: a tube stores its **starting end**, a panel
+its **centre**, an integral slide the **foot of its run-out**, a ball pool the
+**top edge of its front wall**. The element sections say which.
+
+The rotation turns the element's local axes into world axes. Local **+X** is
+the reference direction almost everywhere: the axis of a tube, the direction a
+wheel spins around, the long edge of a panel.
+
+### 3.2 Quaternion encoding
+
+The four stored numbers are **not** the quaternion components. Each component
+is squared, keeps its sign, and the result is scaled by 4:
+
+```js
+// file -> quaternion
+const decode = (v) => Math.sign(v) * Math.sqrt(Math.abs(v));
+// quaternion (unit) -> file
+const encode = (c) => Math.sign(c) * c * c * 4;
+```
+
+The scale is why the absolute values of the four numbers always add up to
+exactly 4 (a unit quaternion would give 1) — in all 10 958 tuples checked, no
+exception. Writing them with scale 1 produces a file that loads but shows a
+completely twisted model, which is how the factor was found. **✔**
+
+Component order is `w, x, y, z` — note that three.js uses `x, y, z, w`.
+
+Common values: `{4., 0., 0., 0.}` is the identity, `{2., 0., 2., 0.}` is 90°
+about Y, `{1.707106781187, …}` and `{0.292893218813, …}` appear in 22.5°
+constructions (they are `1 ± √2/2`).
+
+### 3.3 Materials and colours
+
+The `material3` lines at the top of the file define numbered materials; every
+part references one by number in its first field. The corpus uses two sets of
+the same colours: numbers 1–5 for tubes and connectors, 6–9 and 12/14 for
+panels and fabric, 11 and 13 for the aluminium profile. Colour is taken from
+the **name** in the material line, not from the RGB triple. **✔**
+
+### 3.4 Part size vs. grid span
+
+Lengths in the file are the **part** size, not the distance between connector
+centres. A tube that spans one 400 mm grid field is stored as `350.` — the
+connector contributes the missing 50 mm. Same for panels: a 40 × 40 cm panel
+is `350.` × `350.`. **✔**
+
+Sizes come in **pairs**: a base size followed by a second number that is
+almost always `0.`. Where it is not zero, it is an **addition to the base
+size** — the total is the sum. This matters in rotated or 22.5° constructions,
+where parts do not sit on whole grid steps: of the 729 `tube2` lines with a
+non-zero second number, the far end lands on a connector in 665 cases when the
+two are added, and in 3 cases when the second number is ignored. For panels
+the same test gives all four corners on connectors for 74 of 96 panels with
+the addition, and 25 without. **✔**
+
+The addition is **entered by hand** — the original software has a field for it.
+It papers over a distance for which no part exists: the ball cage roof needs
+79.85 cm between two connectors, the longest tube is 75, so the file carries
+`750.` plus an addition of `48.5` mm. The PART stays the catalogue tube (the
+parts list counts a 75 cm tube); what grows is the drawn body, and only there.
+Such a joint cannot be built in either editor — this app draws it, it does not
+offer it. **✔**
+
+### 3.5 Editing steps: the numbers at the end of every line
+
+**Every part line ends with the step it was created in.** A second number may
+follow — the step in which the part disappeared again. The header counts the
+steps the document has behind it.
+
+```
+tube2{2, {…}, 1, 350., 0., 1}         created in step 1, still there
+tube2{2, {…}, 1, 350., 0., 1, 3}      created in step 1, gone since step 3
+```
+
+That is not a guess. A saved-by-hand series through the software — empty
+document, place a tube, place a second one, delete the first, place three more,
+delete two, delete the rest, clear the history — writes exactly this:
+
+| After | Header | live lines | dead lines |
+|---|---|---:|---:|
+| empty document | `0, 0;` | 1 | 0 |
+| one tube | `1, 1;` | 3 | 1 |
+| second tube | `2, 2;` | 5 | 2 |
+| first tube deleted | `3, 3;` | 3 | 5 |
+| three more tubes (a square) | `6, 6;` | 8 | 9 |
+| two tubes deleted | `7, 7;` | 5 | 15 |
+| the last two deleted | `8, 8;` | **0** | 21 |
+| `Bearbeiten → Vergangenheit löschen` | `0, 0;` | 0 | **0** |
+
+Everything checks out: three tubes placed one after another raise the header by
+three, two tubes deleted **in one action** raise it by one, the square really is
+eight live lines (four tubes, four connectors), and after deleting everything
+not a single live line is left. Clearing the past then throws away every dead
+line and resets the counter — the file ends up holding nothing but its
+materials. **✔**
+
+Two more things the series shows:
+
+- **A change is a death and a birth.** Attach a second tube to a connector and
+  its arm mask changes: the old line is closed with the step, and a new line
+  with the new mask opens in the same step.
+  Same step for both is normal, and a part that appears and disappears within
+  one step is written with two equal numbers (`…, 7, 7}`).
+- **A connector that is deleted is written out with arm mask 0.** Its arms are
+  gone by then. So a mask-0 line is usually history, but not always — 79 live
+  ones sit in 33 corpus files, left-over connectors the software does not draw
+  (§5.1).
+
+**The header decides what counts.** A line whose birth step lies beyond the
+header is ignored — proven with the same `clip2` line twice: under `0, 0;`
+nothing is drawn, under `5, 5;` the clip appears. Practical consequence for a
+reader: **take the lines with one trailing number, ignore those with two.**
+This app does that (`hasRenderRange` in [`qdfimport.js`](../web/js/qdfimport.js)).
+
+In files that never saw an edit — 235 of the 239 in the corpus — the rule is
+invisible: they carry `0, 0;` and **every one of their 36 646 part lines ends
+with a plain `0`**, the birth step of a document that has no history. That is
+also why so many field tables below used to end in a mysterious "always 0".
+
+### 3.6 The position-adjustment flag
+
+The third field of every element — the one right after the placement tuple — is
+the **Positionsanpassung** of the part properties dialog:
+
+| Value | Dialog |
+|---:|---|
+| `1` | *frei (automatisch anpassen)* — free, adjusted automatically |
+| `0` | *fixiert (nicht anpassen)* — pinned, left alone |
+
+It really is a boolean: across the corpus the field is `1` 34 073 times and `0`
+3 898 times, and nothing else, in every element type. **✔**
+
+Which parts carry which value tells the same story as the dialog. What the
+editor fits for you is free — `tube2` 17 556 : 2 177, `connector3` 11 573 :
+1 202, `panel2` 2 522 : 240. What a user hangs into the frame by hand is
+pinned: **`roof2` and `roof-large2` are `0` in every single line** (41 and 9),
+and `hole-connector4` is pinned in 37 of its 51 lines.
+
+What "adjusted automatically" changes in the editor is not settled — presumably
+the part follows when its neighbours move. Writing `1` everywhere is what this
+app does and the software accepts it. **~**
+
+---
+
+## 4. The element catalogue
+
+`Quadro.exe` contains a table of all 44 element keywords at offset `0x1c2650`.
+Sorted by how often they appear in the corpus:
+
+| Element | Lines in corpus | What it is |
+|---|---:|---|
+| `tube2` | 21 275 | straight tube |
+| `connector3` | 15 429 | connector cube |
+| `material3` | 3 365 | material definition |
+| `panel2` | 2 935 | panel |
+| `camera2` | 953 | saved view |
+| `connector45_2` | 736 | 45° angle connector |
+| `round-tube2` | 311 | quarter-circle bow tube |
+| `alu2` | 174 | aluminium reinforcement profile |
+| `steering-lock2` | 172 | steering lock |
+| `flexi-connector3` | 168 | flexi connector arm |
+| `bearing2` | 125 | bearing (wheel axle) |
+| `multi-wheel2` | 125 | spoked wheel |
+| `bearing-connector4` | 101 | bearing connector clamped on a tube |
+| `bolt2` | 84 | bolt holding a flexi joint |
+| `textil2` | 82 | net / fabric sheet |
+| `slide-end2` | 82 | slide run-out |
+| `slide2` | 77 | modular slide body |
+| `floating-wheel2` | 76 | floating wheel |
+| `open-connector2` | 69 | open connector |
+| `hub-cap2` | 58 | hub cap |
+| `textil-round2` | 54 | curved fabric wall |
+| `hole-connector4` | 51 | hole-pin connector |
+| `roof2` | 42 | roof sheet |
+| `pool2` | 42 | ball pool |
+| `casters2` | 36 | caster |
+| `lattice2` | 18 | lattice / net panel |
+| `curved-slide2` | 10 | curved slide body |
+| `roof-large2` | 9 | large roof |
+| `tube-cap2` | 9 | tube cap |
+| `slide-new2` | 7 | integral slide |
+| `adapter2` | 7 | adapter |
+| `bag2` | 6 | play bag |
+| `clamp2` | 3 | double-tube connector |
+| `clip2` | 1 | tube clip |
+| `pool-small2` | 1 | small ball pool |
+| `alu-connector2` | 0 | short aluminium profile |
+| `display2` | 0 | info sign (same shape as `panel2`) |
+| `wood2` | 0 | wood part |
+| `wood-bed2` | 0 | wood bed |
+| `wood-knob2` | 0 | wood knob |
+| `round-wood2` | 0 | round wood part |
+| `chairseatback2` | 0 | chair seat back |
+
+The nine with zero lines exist in the binary only. `alu-connector2` and
+`display2` are handled by this app's importer anyway (a 400 mm profile and a
+panel respectively); the wood parts and the chair back are from product lines
+we have never seen a file for.
+
+Written by hand and fed to the software, four of them do draw:
+`alu-connector2` (400 mm profile), `display2` (a flat 350 × 350 rectangle of
+two triangles), `wood-bed2` (350 × 350 × 30 mm) and `chairseatback2`
+(400 × 385 × 49 mm) — all with the field layout of the element they resemble.
+`wood2`, `wood-knob2` and `round-wood2` refuse every layout tried (three each):
+the software throws the **whole file** away, so their fields stay unknown. **?**
+
+---
+
+## 5. Elements in detail
+
+Every table lists the fields **after** the element name, counted from 0. Field
+1 is the placement tuple (§3.1) throughout, and field 2 the position
+adjustment of §3.6;
+both are only repeated in the tables for completeness.
+
+### 5.1 Structure
+
+#### `connector3` — connector cube
+
+```
+connector3{1, {4., 0., 0., 0., 0., 0., 0.}, 1, 0, 0, 63, 4095, 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number (always 1 = black) | ✔ |
+| 1 | placement, anchor = centre of the cube | ✔ |
+| 2 | position adjustment (§3.6) | ✔ |
+| 3 | almost always 0; a handful of lines carry 63, 60, 15 or 51 | ? |
+| 4 | **arm mask**: which of the six sockets exist, in the cube's *local* axes — `0x01` +X, `0x02` −X, `0x04` +Y, `0x08` −Y, `0x10` +Z, `0x20` −Z | ✔ |
+| 5 | complement of field 4: `63 − mask`, without exception in the corpus | ✔ |
+| 6 | face mask, `4095` = `0xFFF` in more than half the lines, 226 different values overall — **no effect on the geometry**: nine values from 0 to 4095 all draw the same 192 triangles | ✔ |
+| 7 | **birth step** (§3.5) — `0` in a file without history | ✔ |
+| 8 | the step it disappeared in, only on dead lines (§3.5) | ✔ |
+
+The arm mask is what makes a connector look like the real part: it includes
+sockets with no tube in them. Because the mask is local, a rotated connector
+has to have its world directions rotated back before the bits are read.
+
+The mask is the **only** thing that shapes the part — the catalogue types are
+nothing but masks, and the software draws each one differently:
+
+| Catalogue id | Mask | Arms | Triangles |
+|---|---:|---|---:|
+| `straight` | 3 | +X −X | 64 |
+| `elbow` | 5 | +X +Y | 96 |
+| `t` | 7 | +X −X +Y | 96 |
+| `cross` | 15 | +X −X +Y −Y | 128 |
+| `3way` | 21 | +X +Y +Z | 112 |
+| `4way` | 23 | +X −X +Y +Z | 128 |
+| `5way` | 31 | all but −Z | 160 |
+| `6way` | 63 | all six | 192 |
+
+Two traps in there. Mask **13** (`+X +Y −Y`) is coplanar and gives another T,
+not the spatial three-way — that one is mask **21**. And masks **0 and 1 draw
+nothing at all**: below two arms the software leaves the part out. That is not
+academic — mask 0 appears **80 times** in the corpus, so those lines describe
+connectors that stay invisible. **✔**
+
+#### `connector45_2` — 45° angle connector
+
+```
+connector45_2{1, {4., 0., 0., 0., 0., 800., -1000.}, 1, 0, 27, 36, 4095, 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number | ✔ |
+| 1 | placement, anchor = the connector it sits on | ✔ |
+| 2 | position adjustment (§3.6) | ✔ |
+| 3 | 0 in almost every line, 1 in 40 | ? |
+| 4 | 0 in every line | ? |
+
+(The four eight-field `connector45_2` lines in the sample folder are not the
+manufacturer's — they come from an old export of this app, which wrote the
+fields of a `connector3` here. The software rejects such a file.)
+
+Two things are important here, both confirmed by what the software accepts:
+the angle connector does **not** replace the connector it sits on — the file
+carries a `connector3` at the same point as well — and the line has **five
+fields**, not the eight of a `connector3`. Writing eight makes the software
+reject the file.
+
+The tube leaving an angle connector starts about 86.7 mm off the connector
+centre, which is the length of the adapter arm.
+
+#### `tube2` — straight tube
+
+```
+tube2{2, {4., 0., 0., 0., 0., 0., 0.}, 1, 350., 0., 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number (colour) | ✔ |
+| 1 | placement, anchor = **starting end**, local +X = tube axis | ✔ |
+| 2 | position adjustment (§3.6) | ✔ |
+| 3 | tube length in mm — the part, not the grid span (§3.4). Seven catalogue lengths occur: 100, 150, 200, 250, 350, 520 and 750 | ✔ |
+| 4 | addition to the length (§3.4), `0.` in 93 % of lines | ✔ |
+| 5 | **birth step** (§3.5) — `0` in a file without history | ✔ |
+| 6 | the step it disappeared in, only on dead lines (§3.5) | ✔ |
+
+The far end is `start + direction × (length + addition + 50 mm)`.
+
+Files written by this app can carry a measured length instead of a catalogue
+one (four lines of `774.2037` in our own corpus) — the original software takes
+those without complaint.
+
+#### `round-tube2` — bow tube
+
+```
+round-tube2{2, {0., 2., 0., 2., 1600., 800., -400.}, 1, 350., 0., 0}
+```
+
+Same fields as `tube2`, and the length is `350.` in every single line — the bow
+comes in one size only. **✔**
+
+The geometry is a quarter circle: local **+X** is the tangent at the starting
+end, local **+Y** points at the centre of the circle, and the radius is the
+grid step (length + 50 mm). Centre `C = start + Y·R`, far end
+`E = start + R·(X + Y)`. This was worked out by fitting both ends onto
+existing connectors — read as a straight tube, a bow lands nowhere near the
+frame. **✔**
+
+#### `alu2`, `alu-connector2` — reinforcement profile
+
+```
+alu2{11, {4., 0., 0., 0., -400., 800., 0.}, 1, 800., 0., 0}
+```
+
+Fields as `tube2`. Two lengths occur, `800.` and `600.`, and the profile
+usually bridges a **joint**: it sits centred over the connector between two
+collinear reinforced tubes rather than inside a single tube. The material
+number is 11 in 166 of 174 lines. **✔**
+
+`alu-connector2` is in the binary's table (a 400 mm profile) but appears in no
+file we have.
+
+### 5.2 Surfaces
+
+#### `panel2`, `display2` — panel and info sign
+
+```
+panel2{8, {0., 0., 2., 2., -200., 400., -200.}, 1, 350., 0., 350., 0., 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number (panel colour set) | ✔ |
+| 1 | placement, anchor = **centre** of the panel, in the plane of the tube axes | ✔ |
+| 2 | position adjustment (§3.6) | ✔ |
+| 3 | first edge, part size in mm — belongs to the local **Y** axis | ✔ |
+| 4 | addition to field 3 (§3.4) | ✔ |
+| 5 | second edge, belongs to the local **X** axis | ✔ |
+| 6 | addition to field 5 | ✔ |
+| 7 | **birth step** (§3.5) — `0` in a file without history | ✔ |
+| 8 | the step it disappeared in, only on dead lines (§3.5) | ✔ |
+
+Which edge belongs to which axis matters: swap them and a 40 × 20 panel comes
+out across the frame. The corpus is unanimous — first size on Y — in all 98
+non-square panels. **✔**
+
+The size fields really are free: the software draws every catalogue size, and
+the panel is **pure scaling** — always 22 triangles, the box measures size +
+50 mm in both directions, 47,1 mm thick. **✔**
+
+The local **Z** axis says which side of the tubes the panel is fastened to.
+
+**The rotation of a panel lives in the roll of that placement.** A panel has
+lips on two opposite edges, and the software lets it be turned in 90° steps;
+nothing else in the line changes — same centre, same sizes, same material.
+Four files of the same panel, only rotated (`tmp/Platte1.qdf` and friends):
+
+| Turn | Quaternion | local X | local Y |
+|---|---|---|---|
+| 0° | `{0., 0., 4., 0.}` | −X | +Y |
+| 90° | `{0., 2., 2., 0.}` | +Y | +X |
+| 180° | `{0., 4., 0., 0.}` | +X | −Y |
+| 270° | `{0., -2., 2., 0.}` | −Y | −X |
+
+So 0°/180° put the lips on one pair of tubes, 90°/270° on the other. This app
+reads the pair from the placement (the four corner connectors it finds are
+ordered by the local axes), writes it back the same way, and reproduces all
+four lines byte for byte. **✔**
+
+**The perforated panel does not exist for this software.** No field
+distinguishes it (field 7 of all 2 762 `panel2` lines is `0` or a step number),
+and it is not a matter of presentation either: all nine panel materials draw
+the same 22 triangles, and the only `.bmp` strings in the binary belong to a
+file dialog, not to a built-in texture. **✔**
+
+`display2` has the same shape and is read as a panel.
+
+#### `textil2` — net / fabric sheet
+
+```
+textil2{7, {2., 0., 0., 2., -200., 400., -1000.}, 1, 350., 0., 750., 0., 0}
+```
+
+Fields as `panel2`. The second size is `750.` in every line of the corpus. The
+sizes are part sizes again: `350. × 750.` spans a 40 × 80 cm field. **✔**
+
+#### `lattice2` — lattice panel
+
+```
+lattice2{8, {2., 0., 0., 2., 2000., 812.5, 0.}, 1, 1550., 0., 775., 0., 0}
+```
+
+Fields as `panel2`, but the sizes are the **true** span of the sheet, not the
+part size: `1550 × 775` measures exactly from −775 to +775 around the anchor.
+**✔** Unlike `panel2`, both orders occur (`1550, 775` twice as often as
+`775, 1550`), so a reader has to try both.  **✔**
+
+The software **reads the line and draws nothing**. With the layout above the
+file loads (the control element of the probe appears), the lattice does not —
+not on its own, and not in the manufacturer's own model that contains two of
+them. Whatever switches it on, it is not in the line. **✔**
+
+### 5.3 Clamps, adapters, special connectors
+
+#### `hole-connector4` — hole-pin connector
+
+```
+hole-connector4{1, {2., -2., 0., 0., 1249.999999999932, 1500.000021502626, -899.999978497104}, 0, 0, 11, 8, 3840, 0, 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number | ✔ |
+| 1 | placement, anchor = **mouth of the open socket**; the tube in it runs along local **−Y** | ✔ |
+| 2 | position adjustment (§3.6) — pinned (`0`) in 37 of 51 lines | ✔ |
+| 3 | 0 (one line has 60) | ? |
+| 4 | **arm mask**, `11` in 50 of 51 lines — it picks the variant, see below | ✔ |
+| 5 | field 4 minus 3, without exception | ✔ |
+| 6 | `3840` = `0xF00` in every line | ? |
+| 7 | 0 on every line we have | ? |
+| 8 | **birth step** (§3.5), plus a second number on dead lines | ✔ |
+
+The part grips **over a socket of a connector** — it does not clamp a tube
+directly, and it does not replace the connector next to it. The −Y reading of
+the tube direction holds in all 26 cases where a tube is attached. **✔**
+
+Field 4 picks the variant, and **the arm count of the product is not the number
+of set bits** — that is the trap here. Captured from the software:
+
+| Mask | Product | Catalogue | Triangles |
+|---:|---|---|---:|
+| 11 | pin connector **1-way** | `hole_1` (CH1) | 352 |
+| 15 | pin connector **2-way** | `hole_2` (CH2) | 544 |
+| 31, 59 | pin connector **3-way** | `hole_t` (CH3) | 736 |
+
+Masks 31 and 59 are the same shape in a different orientation (checked against
+the rotation-invariant distances of every point to the centroid). Masks with
+single bits (1, 2, 4, 8, 16, 32) and mask 3 do draw something, but only
+**fragments** — sleeves without their pin. They match no product. **✔**
+
+Deciding the variant by counting bits therefore gets every case wrong: mask 11
+has three bits and is the one-way part.
+
+#### `clamp2`, `clip2` — double-tube connector and tube clip
+
+```
+clamp2{2, {2., 0., 0., 2., -1200., 510., 50.}, 1, 0}
+clip2{2, {2., 0., 0., 2., 0., 260., 0.}, 1, 0, 3}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number (both are red parts) | ✔ |
+| 1 | placement, anchor = a point on the tube, local +X = tube direction | ✔ |
+| 2 | position adjustment (§3.6) | ✔ |
+| 3 | 0, except two `clamp2` lines carrying step numbers | ? |
+| 3 | `clamp2`: **birth step** (§3.5). `clip2`: 0 in the line we have | ✔ / ? |
+| 4 | `clip2` only: **birth step** (§3.5) | ✔ |
+
+The last number of a `clip2` line looked like a switch at first: with the `3`
+of the single corpus line the software draws nothing, with `0` the clip appears
+(208 triangles, 50 × 95 × 57 mm). It is not a switch, it is the birth step —
+the same line with the header raised to `5, 5;` draws perfectly well. **✔**
+
+Field counts matter too: four or seven fields make the software reject the
+**whole file**, five and six are accepted.
+
+The double-tube connector is a figure eight holding **two parallel tubes**
+about 50 mm apart; the file stores only one point, and the second tube has to
+be found geometrically.
+
+#### `bearing2` — bearing
+
+```
+bearing2{1, {4., 0., 0., 0., 0., 1200., 200.}, 1, 50., 0., 0}
+```
+
+Field 3 is `50.` in every line, field 4 `0.`, field 5 the birth step (§3.5).
+It sits at the same point as the connector that carries it — the file has both
+lines. **✔**
+
+#### `bearing-connector4` — bearing connector
+
+```
+bearing-connector4{1, {…}, 1, 0, 34, 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 3 | 0, or 51 in 15 lines | ? |
+| 4 | 0, 34, 32, 35, 1 or 3 — looks like a mask | ? |
+| 5 | 0 in every line | ? |
+
+This app reads the part, names it and writes the original fields back
+untouched.
+
+#### `flexi-connector3`, `bolt2` — flexi joint
+
+```
+flexi-connector3{1, {…}, 1, 60, 0, 8, 0, 17, 0}
+bolt2{1, {0., 0., 4., 0., 2000., 1200., 0.}, 1, 150., 1, 0}
+```
+
+A flexi joint is a **bolt with up to two hinges**, and there is deliberately no
+`connector3` at that point. Measured on all 84 bolts and 168 hinges of the
+corpus, plus the meshes captured from `Quadro.exe`:
+
+- **`bolt2`** is a 150 mm rod of **three 50 mm segments** along its local +X,
+  drawn centred on its own point (field 3 is `150.` in every line — the length).
+  Two segments plug into tubes or stay open, the middle one carries the hinges.
+  **Field 4 says where the joint sits: `1` = on the bolt's point, `0` = 50 mm
+  along local −X.** Every hinge of that joint sits exactly on that point
+  (83 of 84 bolts have exactly two hinges, all of them there). **✔**
+- **`flexi-connector3`** is the hinge: a 50 mm collar around the bolt (local +X
+  = the bolt axis, bore radius 21 mm) with its own socket 75 mm along local
+  **−Y**. Both collars are toothed, so two hinges of a joint rest in 45°
+  steps — the angle between their arms is **135° in all 83 joints**, never 0.
+  Field 5 is `8` in every line. Field 3 is `0` when the arm hangs straight down
+  and `60` when it stands 45° off; field 7 is `32 + k` (k = 0…3 by bolt axis:
+  +X, +Z, −X, −Z) in the first case and 16, 17 or 18 in the second. What
+  exactly those two encode is **?** — the part is drawn from the quaternion, so
+  this app writes a combination that occurs in the corpus.
+
+This app turns bolt and hinges into ONE node (`part = "flexi_bolt"`, hinge
+angles in `hinges`) whenever a node sits on the joint point — 63 of the 84
+bolts of the corpus. The rest keeps its original lines and is written back
+untouched.
+
+#### `pool2`, `pool-small2` — ball pool
+
+```
+pool2{8, {2., 0., 2., 0., -800., 400., -600.}, 1, 0}
+```
+
+Four fields, and **no dimensions**: there are exactly two pools, and their size
+sits in the meshes captured from `Quadro.exe` — `pool2` is 125 × 165 × 40 cm
+and `pool-small2` 85 × 125 × 20 (basin 120 × 160 and 80 × 120 plus half a tube
+width on each side). The placement is the **top edge of the front wall**; for
+`pool2` it sits in the middle of that wall, for `pool-small2` **20 cm off
+centre** (its mesh runs from −22.5 to +62.5 cm in local X). The depth is not in
+the file at all — it is read from the frame around the pool. **✔**
+
+#### `open-connector2`, `adapter2`, `tube-cap2`
+
+Four fields each: material, placement, flag, and the **birth step** (§3.5) —
+that is the `0` at the end. They are single small parts sitting on a socket.
+**✔**
+
+The three are easy to mix up, so here is what the software actually draws
+(measured from the meshes captured out of `Quadro.exe`, axis = local +X,
+origin = the connector centre the part sits on):
+
+| Element | Length | Along +X | Ends |
+|---|---:|---|---|
+| `open-connector2` | 50 mm | +25 … +75 | **both open**, inner radius 17 mm |
+| `adapter2` | 55 mm | +25 … +80 | one closed |
+| `tube-cap2` | 24 mm | −45 … −21 | one closed |
+
+So the tube cap is `tube-cap2`, and `open-connector2` is a through sleeve one
+connector length beside the cube. **✔**
+
+### 5.4 Wheels
+
+`multi-wheel2`, `floating-wheel2`, `hub-cap2`, `casters2` and
+`steering-lock2` all have the same four fields: material, placement, flag and
+the **birth step** (§3.5). The wheel spins about the local **+X** axis. **✔**
+
+### 5.5 Slides and roofs
+
+```
+slide2{6, {2., 0., 2., 0., 0., 800., -2200.000000000004}, 1, 0}
+slide-end2{9, {2., 0., 2., 0., 1200., 0., -2200.000000000004}, 1, 0}
+slide-new2{6, {2., 0., 2., 0., 400., 0., 1000.}, 1, 0}
+curved-slide2{7, {2., 0., -2., 0., -1200., 1450., -200.}, 1, 0}
+roof2{4, {…}, 1, 0}
+roof-large2{0, {…}, 0, 0}
+```
+
+Four fields each — material, placement, flag, **birth step** (§3.5), and **no
+dimensions at all**. Slides are fixed parts, and the shapes are hard-coded in
+the software; a reader has to know them. **✔**
+
+The anchor point differs between the chain parts and the integral slide, and
+this trips people up:
+
+- `slide2` and `curved-slide2` are **chain** parts: the anchor is the **entry**
+  (top) end, and the next part of the chain sits at the local offset
+  `(0, −800, 1200)` for the straight body and `(600, −800, 600)` for the curved
+  one — 73 of 76 occurrences. **✔**
+- `slide-end2` closes a chain; its anchor is its own upper connection. **✔**
+- `slide-new2` is the one-piece integral slide, and its anchor is the **foot**
+  of the run-out. The entry is 850 mm up and 1200 mm back along its run
+  direction. **✔** Its shape is the one thing in this program that is **not**
+  built at run time: it is `VRML/rutsche10.wrl` next to the executable, a CATIA
+  export of 1004 triangles. A `slide-new2` line on its own draws nothing in our
+  tests. **✔**
+- In the manufacturer's files a 350 mm tube sits under an integral slide, its
+  centre exactly on the slide's anchor. It is part of the slide, not a tube of
+  the frame. **✔**
+
+`roof2` and `roof-large2` are fabric roofs with the same four fields;
+`roof-large2` is the only element that regularly carries material `0`.
+
+### 5.6 Play equipment
+
+#### `pool2`, `pool-small2` — ball pool
+
+```
+pool2{8, {4., 0., 0., 0., -200., 400., 800.}, 1, 0}
+```
+
+Four fields (the last is the birth step, §3.5), no dimensions. The pool is
+**one** element in the file even though it looks like five panels. The anchor is the **top edge of the front
+wall**, and the wall size is fixed per variant: 1200 × 400 mm for `pool2`,
+400 × 200 mm for `pool-small2`. **✔**
+
+The **depth is not in the file at all** — it has to be derived from the frame
+(this app walks the connectors behind the front wall). **✔**
+
+#### `bag2` — play bag
+
+Four fields, the last one the birth step (§3.5). The anchor sits on **one** of the two tubes the bag hangs
+between; the centre of the field is 200 mm further along the local +Z axis (at
+all five occurrences in the corpus). **~**
+
+#### `textil-round2` — curved wall
+
+Five fields: material, placement, flag, then a number that is `0` in 31 lines
+and `1` in 23 — probably which way the quarter cylinder curves **~** — and the
+**birth step** (§3.5). **✔** The count matters: writing the four fields most other
+accessories carry is enough to lose the file (§3.2).
+
+### 5.7 Document elements
+
+#### `material3`
+
+```
+material3{1,"black", 1, 1.,1.,1., 0.,0.,1.,7.5, 0.,0.,0.,7.5, "", 0}
+```
+
+| # | Meaning | Level |
+|---|---|---|
+| 0 | material number, referenced by every part | ✔ |
+| 1 | name — `black`, `red`, `green`, `blue`, `yellow`, `alu`, `white`, `mirror`; this is what a reader should key colours off | ✔ |
+| 2 | set: 1 for tubes and connectors, 2 for panels and fabric | ~ |
+| 3–5 | RGB, 0…1 | ✔ |
+| 6–9 | four numbers, the last always `7.5` — a specular/gloss group | ~ |
+| 10–13 | same shape again, second lighting group | ~ |
+| 14 | empty string in every line — probably a texture name | ~ |
+| 15 | 0 in every line | ? |
+
+#### `camera2` — saved view
+
+```
+camera2{320, 130, 0, 0, 0, 0, 0, 0, 355, 0, 55, 0, 233, 381, 40, 62, 33, 3000, 10, 10, 1.635897, 40.000000, 0, 1.000000, 1.000000}
+```
+
+25 fields, and they are simply the **Kamera / Perspektive dialog** written out
+(`Ansicht → Kameraposition …`). Read off by setting every box to a distinct
+number, saving, and reading the line back. **✔**
+
+| # | Dialog box | Example |
+|---:|---|---:|
+| 0 | camera **Abstand** [cm] | 222 |
+| 1 | camera **Höhe** [cm] | 111 |
+| 2 | camera **Links/Rechts** [cm] | 33 |
+| 3 | camera **Drehwinkel** [°] | 44 |
+| 4 | camera **Kippwinkel** [°] | 15 |
+| 5 | model **Abstand** [cm] | 77 |
+| 6 | model **Höhe** [cm] | 66 |
+| 7 | model **Links/Rechts** [cm] | 88 |
+| 8 | model **Drehwinkel** [°] | 99 |
+| 9 | model **Kippwinkel** [°] | 12 |
+| 10 | eye position **Höhe** (−100…100) | 40 |
+| 11 | eye position **Breite** (−100…100) | 20 |
+| 12 | field of view **vertical** [cm] | 107 |
+| 13 | field of view **horizontal** [cm] | 174 |
+| 14 | field of view **vertical** [°] | 27 |
+| 15 | field of view **horizontal** [°] | 43 |
+| 16 | **Brennweite** [mm] | 50 |
+| 17 | 3000 in every line — not in the dialog | 3000 |
+| 18, 19 | 10, 10 in every line — not in the dialog | 10 |
+| 20 | resulting **aspect ratio**, width / height | 1.635897 |
+| 21 | vertical angle again, as a float (field 14 rounded) | 26.991467 |
+| 22 | **format**: 0 screen, 1 photo 3:2, 2 video 4:3, 3 cinema 16:9, 4 DIN portrait, 5 DIN landscape, 6 custom | 6 |
+| 23, 24 | the custom **Breite zu Höhe** pair, used when field 22 is 6 | 1.0, 1.0 |
+
+Fields 12–15 are **derived**: enter a focal length and the software recomputes
+all four. Field 20 follows from the format — 1.777778 for cinema, 0.707107 for
+DIN portrait, 1.414214 for DIN landscape, and the window's own ratio for
+"Bildschirmformat". **✔** Fields 23/24 sit next to the custom radio button and
+default to 1/1; that they carry its ratio is the obvious reading, but our click
+on those two small boxes never landed, so it stays **~**.
+
+A file carries **one `camera2` per view** — four in a fresh document. They
+differ only in the horizontal extent and the aspect (fields 13, 15, 20), which
+is what a different window width gives. The dialog edits the **first** one.
+
+Writing the line is optional. This app writes **four identical lines** — as
+many as a fresh document has — from the current view, so the software opens the
+model the way the user last looked at it (`cameraLines()` in
+[`qdfexport.js`](../web/js/qdfexport.js), values from `scene.cameraForQdf()`).
+Two of the derived fields check out against the corpus: a line with 40° opening
+carries 33 mm focal length (12 / tan 20° = 32.97) and 146 cm of vertical extent
+at 200 cm distance (2 · 200 · tan 20° = 145.6).
+
+## 6. What we do not know
+
+Collected list of open points, if anyone wants to dig:
+
+- `connector3` field 3 (a handful of non-zero values). Field 6 is settled for
+  the geometry — it changes nothing — but why the corpus carries 226 different
+  values is still open.
+- `connector45_2` fields 3–5.
+- `hole-connector4` field 6 (`3840` everywhere), `bearing-connector4`
+  fields 3–5, `flexi-connector3` fields 3, 4, 6 and 8, `textil-round2`
+  field 3.
+- What makes the software draw a `lattice2`. The line is read without
+  complaint, the part never appears.
+- The field layout of `wood2`, `wood-knob2` and `round-wood2` — every guess so
+  far makes the software reject the file.
+- Why lines with a step range are so often exact duplicates of live ones. The
+  meaning of the numbers themselves is settled (§3.5).
+- `camera2` fields 17 (`3000`) and 18/19 (`10, 10`) — constant in every line we
+  have and absent from the dialog.
+- What the position-adjustment flag (§3.6) actually changes while editing. The
+  dialog names it, the corpus confirms which parts carry which value, but the
+  behaviour behind "adjusted automatically" is untested.
+- Everything else about the element types that exist only in the binary.
+
+---
+
+## 7. How Quadro Builder (this app) reads and writes QDF
+
+[`qdfimport.js`](web/js/qdfimport.js) and [`qdfexport.js`](web/js/qdfexport.js)
+are free of three.js and DOM, so they can be run and tested under Node.
+
+**Reading.** Several passes: materials and connectors first (so tube ends have
+something to snap to), then tubes, then panels, nets and pools, then the
+aluminium profiles, then the double-tube connectors. Tube ends snap to the
+nearest connector within 55 mm. Sizes are read as a pair and added up (§3.4);
+the catalogue part is still chosen by the base size, since the addition is
+extra distance, not extra tube. Lines carrying a step range are skipped
+(§3.5). Elements we cannot draw are still read, named and counted — the ones
+we cannot even name (`wood2` and friends) are ignored.
+
+Because the file's own geometry is more reliable than anything recomputed, an
+imported tube, bow or panel keeps its exact placement from the file (`geom` in
+the model) and writes it back unchanged. That is also why ignoring the size
+addition of §3.4 does no harm here: parts stay where the file put them until
+they are moved.
+
+**Writing.** Materials, then connectors, tubes, profiles, panels, nets,
+clamps, fittings, slides. Three things are worth knowing:
+
+- A 45° angle connector is written as a `connector3` **plus** a
+  `connector45_2` at the same point, and the latter with five fields — with its
+  **own** quaternion. The two are not the same: the cube is rotationally
+  symmetric, the angle connector is not, and at 559 of 726 occurrences in the
+  sample files the two lines at one point carry different quaternions.
+- Reinforcements are written as **runs** bridging joints, not as one profile
+  per tube — that is how the manufacturer's files have it.
+- `camera2` is never written: what its 25 fields do is unknown, and the
+  software falls back to its own default view.
+- Size additions are written back where they came from, and the two sizes of
+  an imported panel keep the order the file had them in.
+
+**Perforated panels ride on a material.** The format has no perforated panel:
+there is no element for it in the binary's keyword table, and `panel2` has no
+spare field — field 3 is the visibility flag, fields 8 and 9 are the step range,
+and the two size fields each carry their addition. So this app writes a
+perforated panel as an ordinary `panel2` that points at a **material of its
+own**: same colour values as the solid panel, but a separate number (15–19) and
+a name ending in `" (hole)"`. The manufacturer's software draws a normal panel
+in the same colour, so the file stays valid and looks right there; we recognise
+the panel on the way back in. That extra materials are tolerated is not a
+guess — 19 of the sample files carry a material 20 and six a material 21, with
+free-form names up to `"new material"`, all written by the software itself.
+Numbers 15 to 19 are unused across the whole corpus.
+
+**What a round trip does not preserve.** Diagonals are normalised to 45°;
+parts with no QDF equivalent are dropped; panel sizes are written from the
+catalogue rather than measured, so a panel on a slope moves by up to a
+centimetre; and the step-range history is not kept — a file saved here has no
+history at all.
+
+Round-trip fidelity, measured over the 239 files: 20 385 of 20 513 tubes come
+back out with exactly the same anchor and length (99.4 %), and re-importing our
+own output and exporting it again gives a byte-identical file for 231 of them —
+the eight that differ do so in the last digits of a quaternion only.
+
+What it *does* preserve is every part. Importing and re-exporting
+`Universal II+Rutsche+Pool` gives the same line count for every element type —
+112 tubes, 76 connectors, 4 angle connectors, 4 bows, 12 panels, 2 profiles,
+the pool, the roof and both slide parts. Only two kinds of line differ: the
+four `camera2` lines are gone, and the material table is written in full
+(12 entries instead of the 16 that file happened to carry).

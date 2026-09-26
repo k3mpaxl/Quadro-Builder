@@ -2,9 +2,39 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover: ohne das bleiben die env(safe-area-inset-*)-Werte 0,
+       und die untere Bedienleiste läge unter dem Home-Balken. -->
+  <!-- Kein Seiten-Zoom: gezoomt wird im 3D-Bild. Ohne user-scalable=no hat die
+       Kneifgeste neben dem Canvas die ganze Oberflaeche vergroessert. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Quadro Builder</title>
+  <!-- Installierbare Web-App: Manifest, Symbole und Farbe der Systemleiste.
+       Manifest und Service Worker liegen eine Ebene höher, damit ihr
+       Geltungsbereich auch `data/` einschließt. -->
+  <link rel="manifest" href="../manifest.webmanifest" />
+  <meta name="theme-color" content="#1a8cff" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Quadro Builder" />
+  <link rel="icon" href="../icons/icon-192.png" sizes="192x192" type="image/png" />
+  <link rel="apple-touch-icon" href="../icons/icon-192.png" />
   <link rel="stylesheet" href="./css/style.css" />
+  <!-- Farbschema VOR dem ersten Bild setzen. Über die Module ginge das nicht:
+       main.js wartet erst auf den Katalog, bis dahin stünde die Seite hell da
+       und klappte dann sichtbar ins Dunkle um. Gepflegt wird der Wert in
+       ui.js (Einstellungen), hier wird er nur gelesen. -->
+  <script>
+    (() => {
+      const mode = localStorage.getItem("quadro.theme.v1") || "auto";
+      const dark = mode === "dark" || (mode !== "light"
+        && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    })();
+  </script>
+  <!-- Der Teilekatalog wird für die Werkzeugleiste gebraucht. Ohne diesen
+       Hinweis startet sein Abruf erst, wenn der ganze Modulbaum geladen ist --
+       die Bauteil-Knöpfe erschienen dadurch sichtbar später. -->
+  <link rel="preload" href="../data/parts.json" as="fetch" crossorigin="anonymous" />
   <script type="importmap">
     {
       "imports": {
@@ -13,24 +43,82 @@
     }
   </script>
 </head>
-<body class="sidebar-hidden">
+<body class="sidebar-hidden booting">
+  <!-- Geräteform sofort setzen, noch vor dem ersten Bild. An diesen zwei Klassen
+       hängt das ganze Layout; ui.js setzt sie erst, wenn der Katalog geladen ist
+       -- bis dahin stand auf dem Telefon sichtbar die Schreibtisch-Fassung und
+       klappte dann um. Die Abfragen sind dieselben wie dort (mqPortrait,
+       mqNarrow), ab dem Start führt applyLayout() sie weiter. -->
+  <script>
+    (() => {
+      const mq = (q) => window.matchMedia(q).matches;
+      const hochformat = mq("(max-width: 820px) and (orientation: portrait)");
+      document.body.classList.toggle("mobile-portrait", hochformat);
+      document.body.classList.toggle("sidebar-overlay", mq("(max-width: 1000px)") || hochformat);
+    })();
+  </script>
   <header id="toolbar">
 
     <!-- Hauptzeile: Modi + Sonderfunktionen links (scrollt) · Aktionen rechts (fixiert) -->
     <div id="toolbar-main">
       <div id="toolbar-left">
-        <div class="brand">QUADRO <span>Builder</span></div>
+        <!-- Wird der Platz eng, geht zuerst "Builder", dann "QUADRO" -- deshalb steht
+             jedes Wort in einem eigenen Feld. Das Zeichen bleibt immer. -->
+        <div class="brand"><img class="brand-icon" src="../icons/icon-192.png" alt="" width="24" height="24"><span class="brand-name">QUADRO</span><span class="brand-3d">Builder</span></div>
+        <span class="divider"></span>
+        <!-- Datei-Gruppe: ein Knopf, die Einträge klappen wie bei den Bauteilen
+             auf. Die vier Knöpfe dahinter bleiben (versteckt) stehen -- an
+             ihnen hängt die ganze Datei-Logik, das Popup und die Tastenkürzel
+             lösen sie nur aus. -->
+        <div class="group" id="file-actions">
+          <button id="btn-file-menu" class="btn ghost icon-btn" data-i18n-title="menu_file_title">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M4 2.5h5l4 4v9H4z"/>
+              <path d="M9 2.5v4h4"/>
+            </svg>
+            <span data-i18n="menu_file">Datei</span>
+          </button>
+          <button id="btn-doc-new" hidden></button>
+          <button id="btn-doc-open" hidden></button>
+          <button id="btn-doc-save" hidden></button>
+          <button id="btn-doc-saveas" hidden></button>
+          <input id="file-import" type="file" accept=".qdf,application/json,.json" multiple hidden />
+        </div>
         <span class="divider"></span>
         <div class="group seg">
           <button id="mode-add" class="btn active" data-i18n="btn_build" data-i18n-title="btn_build_title">Bauen</button>
           <button id="mode-assembly" class="btn" data-i18n="btn_assembly" data-i18n-title="btn_assembly_title">Aufbau</button>
         </div>
+        <span class="divider"></span>
+        <button id="btn-undo" class="btn ghost icon-sq" data-i18n-title="btn_undo_title" disabled>
+          <!-- Gebogener Pfeil nach links: der übliche Rückgängig-Pfeil -->
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="7,4 3,8 7,12"/>
+            <path d="M3 8h8a5 5 0 0 1 0 10H8"/>
+          </svg>
+        </button>
+        <button id="btn-redo" class="btn ghost icon-sq" data-i18n-title="btn_redo_title" disabled>
+          <!-- Gebogener Pfeil nach rechts -->
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="13,4 17,8 13,12"/>
+            <path d="M17 8H9a5 5 0 0 0 0 10h3"/>
+          </svg>
+        </button>
+        <span class="divider"></span>
+        <label class="autosave-toggle" data-i18n-title="settings_autosave_hint">
+          <input type="checkbox" id="opt-autosave" checked>
+          <span data-i18n="settings_autosave">Automatisch speichern</span>
+        </label>
       </div><!-- #toolbar-left -->
 
       <!-- Fixierter rechter Bereich: Undo · Entwürfe · Toggles · Sidebar · Mehr -->
       <div id="toolbar-right">
+        <!-- Hochformat: Schnittebene und Perspektive wandern hierher, weil die
+             Bauteil-Zeile dann unten steht (siehe applyLayout in ui.js). -->
+        <span id="view-mobile" class="toolbar-icon-row"></span>
+        <span id="view-divider" class="divider" hidden></span>
         <!-- Hamburger: nur auf Mobile -->
-        <button id="btn-hamburger" class="btn ghost icon-sq" aria-label="Menü">
+        <button id="btn-hamburger" class="btn ghost icon-sq" aria-label="Menü" data-i18n-aria="aria_menu">
           <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <line x1="2" y1="5"  x2="16" y2="5"/>
             <line x1="2" y1="9"  x2="16" y2="9"/>
@@ -40,92 +128,96 @@
 
         <!-- Alle Toolbar-Right-Inhalte: Desktop = inline, Mobile = Dropdown -->
         <div id="toolbar-right-inner">
-        <div class="menu" id="file-menu">
-          <button id="btn-file" class="btn ghost icon-btn" data-i18n-title="btn_file_title">
-            <span id="autosave-status" class="save-dot" aria-label="Speicherstatus"></span>
-            <span data-i18n="btn_file">Entwürfe ▾</span>
-          </button>
-          <div id="file-pop" class="menu-pop" hidden>
-            <div class="menu-section">
-              <span class="menu-label" data-i18n="menu_named">Benannter Entwurf</span>
-              <button id="btn-save" class="btn ghost full" data-i18n="btn_save">Als Entwurf speichern…</button>
-              <div class="menu-row">
-                <select id="load-select"></select>
-                <button id="btn-load" class="btn ghost" data-i18n="btn_load">Laden</button>
-                <button id="btn-delete-save" class="btn ghost" data-i18n-title="btn_delete_save_title">🗑</button>
-              </div>
-            </div>
-            <div class="menu-section">
-              <span class="menu-label" data-i18n="menu_file">Datei</span>
-              <div class="menu-row">
-                <button id="btn-export" class="btn ghost full" data-i18n="btn_export">Export</button>
-                <button id="btn-import" class="btn ghost full" data-i18n="btn_import" data-i18n-title="btn_import_title">Import (JSON/QDF)</button>
-              </div>
-              <input id="file-import" type="file" accept="application/json,.json,.qdf" hidden />
-            </div>
-            <button id="btn-clear" class="btn ghost full danger" data-i18n="btn_clear" data-i18n-title="btn_clear_title">Modell leeren</button>
-          </div>
-        </div>
-        <span class="divider"></span>
+        <!-- Wird es oben eng, hängt ui.js Bauen/Aufbau und "Automatisch
+             speichern" hier hinein (ganz oben im Menü). -->
+        <!-- Hochformat: hier stehen die Datei-Einträge als Zeilen (der eigene
+             Datei-Knopf fällt dort weg). -->
+        <div id="menu-file-rows" hidden></div>
+        <div id="menu-extra"></div>
         <!-- Icon-Buttons: Desktop = inline, Mobile-Dropdown = Zeile -->
         <div class="toolbar-icon-row">
-          <button id="btn-labels" class="btn ghost icon-sq" data-i18n-title="btn_labels_title" title="Namen">
-            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="4" width="14" height="11" rx="2"/>
-              <line x1="5.5" y1="9" x2="12.5" y2="9"/>
-              <line x1="5.5" y1="12" x2="9.5" y2="12"/>
+          <!-- Seitenleiste ein-/ausblenden -->
+          <button id="toggle-sidebar" class="btn ghost icon-sq" data-i18n-title="btn_sidebar_title" title="Seitenleiste">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+              <rect x="2" y="3" width="14" height="12" rx="2"/>
+              <line x1="11.5" y1="3" x2="11.5" y2="15"/>
             </svg>
           </button>
-          <button id="btn-hints" class="btn ghost icon-sq" data-i18n-title="btn_hints_title" title="Hinweise">
-            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-              <path d="M9 3C6.24 3 4 5.24 4 8c0 1.86 1 3.5 2.5 4.33V13.5h5V12.33C13 11.5 14 9.86 14 8c0-2.76-2.24-5-5-5z"/>
-              <line x1="6.5" y1="13.5" x2="11.5" y2="13.5"/>
-              <line x1="7.5" y1="15.5" x2="10.5" y2="15.5"/>
-            </svg>
-          </button>
-          <span class="divider"></span>
-          <!-- Sidebar-Öffner -->
-          <button id="toggle-bom" class="btn ghost icon-sq" data-i18n-title="btn_bom_title" title="Stückliste">
-            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-              <line x1="3" y1="5"  x2="15" y2="5" /><line x1="3" y1="9"  x2="15" y2="9" /><line x1="3" y1="13" x2="11" y2="13" />
-            </svg>
-          </button>
-          <button id="toggle-inventory" class="btn ghost icon-sq" data-i18n-title="btn_inventory_title" title="Bestand">
-            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="5" height="5" rx="1"/><rect x="10" y="3" width="5" height="5" rx="1"/>
-              <rect x="3" y="10" width="5" height="5" rx="1"/><rect x="10" y="10" width="5" height="5" rx="1"/>
-            </svg>
-          </button>
+          <div class="menu" id="settings-menu">
+            <button id="btn-settings" class="btn ghost icon-sq" data-i18n-title="btn_settings_title" title="Einstellungen">
+              <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="9" cy="9" r="5" stroke-width="1.6"/>
+                <circle cx="9" cy="9" r="1.9" stroke-width="1.4"/>
+                <path stroke-width="2" d="M14 9h1.9M2.1 9H4M9 14v1.9M9 2.1V4M12.54 12.54l1.34 1.34M4.12 4.12l1.34 1.34M5.46 12.54l-1.34 1.34M13.88 4.12l-1.34 1.34"/>
+              </svg>
+              <span class="pp-name" data-i18n="btn_settings">Einstellungen</span>
+            </button>
+            <div id="settings-pop" class="menu-pop" hidden>
+              <div class="menu-section">
+                <span class="menu-label" data-i18n="settings_language">Sprache</span>
+                <select id="btn-lang" class="lang-select" title="Sprache / Language">
+                  <option value="de">&#x1F1E9;&#x1F1EA; DE</option>
+                  <option value="en">&#x1F1EC;&#x1F1E7; EN</option>
+                </select>
+              </div>
+              <div class="menu-section">
+                <span class="menu-label" data-i18n="settings_theme">Erscheinungsbild</span>
+                <select id="theme-select" class="lang-select"></select>
+              </div>
+              <div class="menu-section">
+                <span class="menu-label" data-i18n="settings_quality">Render-Qualität</span>
+                <select id="quality-select" class="lang-select"></select>
+              </div>
+              <!-- Nur sichtbar, wenn der Browser die Installation anbietet -->
+              <div class="menu-section" id="install-section" hidden>
+                <span class="menu-label" data-i18n="settings_install">App</span>
+                <button id="btn-install" class="btn full" data-i18n="btn_install">Installieren</button>
+              </div>
+              <!-- Rundgang durch die Oberfläche; beim ersten Start läuft er von
+                   selbst, danach nur noch über diesen Knopf. -->
+              <div class="menu-section">
+                <span class="menu-label" data-i18n="settings_tour">Einführung</span>
+                <button id="btn-tour" class="btn full" data-i18n="btn_tour">Demo starten</button>
+              </div>
+              <!-- Fassung der App; die Nummer traegt ui.js aus config.js ein -->
+              <div class="menu-section">
+                <span class="hint" id="app-version"></span>
+              </div>
+            </div>
+          </div>
         </div>
-        <!-- Sprache direkt als Dropdown -->
-        <select id="btn-lang" class="lang-select" title="Sprache / Language">
-          <option value="de">&#x1F1E9;&#x1F1EA; DE</option>
-          <option value="en">&#x1F1EC;&#x1F1E7; EN</option>
-        </select>
         </div><!-- #toolbar-right-inner -->
       </div><!-- #toolbar-right -->
     </div><!-- #toolbar-main -->
 
+
+
+
+
+  </header>
+
+  <main>
+    <div id="work">
     <!-- Kontextzeile: Bauteil-Auswahl (nur in Bau-Modi sichtbar; Farbe per Klick auf aktiven Button) -->
     <div id="toolbar-ctx">
       <div class="group" id="grp-build">
-        <div id="tube-buttons" class="part-row"></div>
-        <span class="mini-divider"></span>
-        <div id="panel-buttons" class="part-row"></div>
-        <span class="mini-divider"></span>
-        <button id="btn-diagonal" class="btn part" data-i18n-title="btn_diagonal_title">
-          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><line x1="3" y1="17" x2="17" y2="3" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-          <span data-i18n="btn_diagonal">Schräg</span>
-        </button>
-        <span class="mini-divider"></span>
-        <button id="mode-clamp" class="btn part" data-i18n-title="btn_clamp_title">
+        <!-- Gruppen (Trenner dazwischen): Auswahl | Rohre, Platten |
+             Rutschen, Raeder | Verbindungen, Sonstiges, Verstaerken | Farbe.
+             Der Trenner zwischen Raedern und Verbindungen steht mitten in
+             #fitting-buttons und wird deshalb in ui.js gesetzt. -->
+        <button id="mode-select" class="btn part" data-i18n-title="btn_select_title">
           <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-            <line x1="3" y1="7" x2="17" y2="7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-            <line x1="3" y1="13" x2="17" y2="13" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-            <rect x="8" y="3.5" width="4" height="13" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M5 3 L5 16 L8.4 12.6 L10.6 17 L12.8 16 L10.6 11.8 L15 11.8 Z" fill="currentColor"/>
           </svg>
-          <span data-i18n="btn_clamp">Doppelrohr</span>
+          <span data-i18n="btn_select">Auswahl</span>
         </button>
+        <span class="divider"></span>
+        <div id="tube-buttons" class="part-row"></div>
+        <div id="panel-buttons" class="part-row"></div>
+        <span class="divider"></span>
+        <div id="slide-buttons" class="part-row"></div>
+        <div id="fitting-buttons" class="part-row"></div>
+        <button id="mode-clamp" hidden></button>
         <button id="mode-reinforce" class="btn part" data-i18n-title="btn_reinforce_title">
           <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
             <rect x="2" y="6" width="16" height="8" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -133,36 +225,83 @@
           </svg>
           <span data-i18n="btn_reinforce">Verstärken</span>
         </button>
+        <span class="divider"></span>
+        <div id="color-buttons" class="part-row" role="group" data-i18n-title="label_color"></div>
       </div>
-      <!-- Delete + Undo: pinned rechts, immer sichtbar -->
-      <span class="mini-divider"></span>
+      <!-- Ersatz für die Farbreihe, wenn der Platz nicht reicht: ein Swatch in
+           der aktuellen Farbe, der die Reihe als Popup aufklappt. Er steht
+           AUSSERHALB der scrollenden Bauteil-Gruppe und bleibt so erreichbar. -->
+      <button id="btn-color" class="btn part collapse-trigger" data-i18n-title="label_color" hidden>
+        <span class="swatch" id="btn-color-swatch"></span>
+      </button>
+      <!-- Ansicht: gehört zum Modell, deshalb hier statt oben rechts -->
+      <span class="divider" id="view-divider"></span>
+      <!-- Ersatz für die Ansichts-Schalter, wenn der Platz nicht reicht -->
+      <button id="btn-view" class="btn ghost icon-sq collapse-trigger" data-i18n-title="btn_view_title" hidden>
+        <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <line x1="3" y1="5" x2="15" y2="5"/><circle cx="11" cy="5" r="2" fill="#fff"/>
+          <line x1="3" y1="9" x2="15" y2="9"/><circle cx="6.5" cy="9" r="2" fill="#fff"/>
+          <line x1="3" y1="13" x2="15" y2="13"/><circle cx="12" cy="13" r="2" fill="#fff"/>
+        </svg>
+      </button>
+      <div class="toolbar-icon-row view-row">
+
+          <!-- Schräg gehört zum Bauen, steht aber bei den Ansichts-Schaltern;
+               die Klasse build-opt sorgt dafür, dass es im Aufbau-Modus sperrt. -->
+          <button id="btn-slice" class="btn ghost icon-sq" data-i18n-title="btn_slice_title" title="Schnitt">
+            <!-- Quader mit Schnittkante -->
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M3 5.5 9 2.5l6 3v7l-6 3-6-3z"/>
+              <path d="M1.5 11.5 9 7.5l7.5 4" stroke-dasharray="2.2 1.8"/>
+            </svg>
+            <span class="pp-name" data-i18n="btn_slice"></span>
+          </button>
+          <button id="btn-projection" class="btn ghost icon-sq" data-i18n-title="btn_projection_title" title="Perspektive">
+            <!-- Wuerfel in Kavalier-Ansicht: Frontflaeche + versetzte Rueckkanten -->
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+              <rect x="2.5" y="6" width="9" height="9"/>
+              <path d="M6.5 3h9v9M11.5 6l4-3M11.5 15l4-3"/>
+            </svg>
+            <span class="pp-name" data-i18n="btn_projection"></span>
+          </button>
+                </div>
+      <!-- Drehen und Löschen: rechts angepinnt, nur mit Auswahl sichtbar
+           (bzw. solange eine Kopie am Zeiger hängt) -- Trenner mit ihnen. -->
+      <span id="delete-divider" class="divider" hidden></span>
+      <button id="mode-rotate" class="btn part" data-i18n-title="btn_rotate_title">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 10a6 6 0 1 1-1.8-4.3"/>
+          <path d="M16 3.4V6.6h-3.2"/>
+        </svg>
+        <span data-i18n="btn_rotate">Drehen</span>
+      </button>
       <button id="mode-delete" class="btn part delete-part" data-i18n-title="btn_delete_title">
         <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
           <line x1="5" y1="5" x2="15" y2="15"/><line x1="15" y1="5" x2="5" y2="15"/>
         </svg>
         <span data-i18n="btn_delete">Löschen</span>
       </button>
-      <button id="btn-undo" class="btn part" style="flex-shrink:0" data-i18n-title="btn_undo_title" disabled>
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 9A6 6 0 0 0 3 9"/>
-          <polyline points="6,6 3,9 6,12"/>
-        </svg>
-        <span data-i18n="btn_undo_short">Zurück</span>
-      </button>
-      <button id="btn-redo" class="btn part" style="flex-shrink:0" data-i18n-title="btn_redo_title" disabled>
-        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 9a6 6 0 0 1 12 0"/>
-          <polyline points="14,6 17,9 14,12"/>
-        </svg>
-        <span data-i18n="btn_redo_short">Wieder</span>
-      </button>
     </div><!-- #toolbar-ctx -->
-
-  </header>
-
-  <main>
+    <!-- Dateien: je offenes Modell ein Tab, wie im Browser -->
+    <div id="tab-bar" class="tab-bar">
+      <div id="tab-list" class="tab-list"></div>
+      <button id="tab-new" class="tab-new" data-i18n-title="btn_doc_new_title" title="Neues Modell">+</button>
+    </div>
     <div id="canvas-wrap">
       <div id="canvas"></div>
+
+      <!-- Schnittebene: schwebende Leiste über dem Viewport, nur bei aktivem Schnitt -->
+      <div id="slice-bar" hidden>
+        <div class="seg" id="slice-axes">
+          <button class="btn small" data-axis="x">X</button>
+          <button class="btn small" data-axis="y">Y</button>
+          <button class="btn small" data-axis="z">Z</button>
+        </div>
+        <input id="slice-range" type="range" min="0" max="100" step="1" value="50">
+        <span id="slice-value" class="slice-value">0 cm</span>
+        <button id="slice-flip" class="btn small ghost" data-i18n-title="slice_flip_title">⇄</button>
+        <button id="slice-close" class="btn small ghost" data-i18n-title="slice_close_title">✕</button>
+      </div>
 
       <!-- Szene-Toggle: Kreis-Icon links oben im Viewport -->
       <button id="scene-toggle" class="scene-icon off" data-i18n-title="btn_grass_title" title="Szene ein-/ausblenden">
@@ -185,6 +324,15 @@
         </svg>
       </button>
 
+      <!-- Raster-Schrittweite: unten rechts im Canvas, rechts vom Tastenkürzel -->
+      <button id="btn-grid" class="canvas-btn" data-i18n-title="btn_grid_title" title="Rasterweite">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2">
+          <rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/>
+          <path d="M5.8 1.5v13M10.2 1.5v13M1.5 5.8h13M1.5 10.2h13"/>
+        </svg>
+        <span id="btn-grid-value">20 cm</span>
+      </button>
+
       <!-- Tastenkürzel-Icon: nur Desktop, unten rechts im Canvas -->
       <button id="btn-help" class="canvas-btn hide-mobile" data-i18n-title="btn_help_title" title="Tastenkürzel">
         <svg viewBox="0 0 22 15" width="22" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
@@ -201,80 +349,220 @@
         </svg>
       </button>
 
-      <div id="status" class="status"></div>
-
-      <div id="help-overlay" class="help-overlay" hidden>
-        <div class="help-card">
-          <h3 data-i18n="help_title">Tastenkürzel</h3>
-          <table id="help-table"></table>
-          <button id="help-close" class="btn" data-i18n="help_close">Schließen</button>
+      <!-- Kein Modell offen: Einstieg statt leerer Fläche -->
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-card">
+          <h2 data-i18n="empty_title">Kein Modell geöffnet</h2>
+          <p data-i18n="empty_hint">Leg ein neues Modell an, öffne ein gespeichertes oder lies eine QDF-Datei ein.</p>
+          <div class="empty-actions">
+            <button id="empty-new" class="btn" data-i18n="btn_doc_new">Neu…</button>
+            <button id="empty-open" class="btn ghost" data-i18n="btn_doc_open">Öffnen</button>
+            <button id="empty-import" class="btn ghost" data-i18n="btn_import">Import</button>
+          </div>
         </div>
       </div>
+
+      <!-- Aufbau im Hochformat: das Aufbau-Panel wandert hier herein und liegt
+           als Karte über der Szene, damit Schritt und Modell zugleich zu sehen
+           sind. Der Griff klappt die Teileliste auf. -->
+      <div id="asm-sheet" hidden>
+        <button id="asm-sheet-handle" class="asm-sheet-handle" data-i18n-title="asm_sheet_toggle">
+          <span class="asm-sheet-grip"></span>
+        </button>
+        <div id="asm-sheet-body"></div>
+      </div>
+
+      <div id="current-part" class="current-part" hidden></div>
+
+      <div id="status" class="status"></div>
+
     </div>
 
-    <div id="sidebar-resizer" title="Breite ziehen"></div>
+    </div><!-- #work -->
+
+    <div id="sidebar-resizer" title="Breite ziehen" data-i18n-title="title_sidebar_resize"></div>
 
     <aside id="sidebar">
+      <div id="side-tabs" class="side-tabs">
+        <button class="side-tab" data-panel="bom" data-i18n="side_tab_bom">Stückliste &amp; Bestand</button>
+        <button class="side-tab" data-panel="own" data-i18n="side_tab_own">Meine Modelle</button>
+        <button class="side-tab" data-panel="library" data-i18n="side_tab_library">Bibliothek</button>
+        <button class="side-tab" data-panel="assembly" data-i18n="side_tab_assembly" hidden>Aufbau</button>
+        <!-- Nur wenn die Leiste überlagert: sie ist dann ein Menü und braucht
+             ein sichtbares Schließen. -->
+        <button id="sidebar-close" class="sidebar-close" data-i18n-title="btn_sidebar_close" title="Schließen">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>
+          </svg>
+        </button>
+      </div>
+
       <section class="panel" id="panel-bom">
-        <h2 data-i18n="bom_title">Stückliste</h2>
+        <div id="model-size" class="model-size" hidden></div>
+        <div id="feasibility-banner" class="feasibility"></div>
+        <div class="bom-tools">
+          <button id="btn-inv-toggle" class="btn ghost small" data-i18n="btn_inv_edit" data-i18n-title="btn_inv_toggle_title">Bestand bearbeiten</button>
+          <button id="btn-inv-export" class="btn ghost small" data-i18n-title="btn_inv_export_title">⤓ JSON</button>
+          <button id="btn-inv-import" class="btn ghost small" data-i18n-title="btn_inv_import_title">⤒ JSON</button>
+          <input id="inv-file-import" type="file" accept=".json,application/json" hidden>
+        </div>
+        <div class="bom-opts">
+          <label class="asm-opt">
+            <input type="checkbox" id="bom-by-color" checked>
+            <span data-i18n="bom_by_color">Nach Farben trennen</span>
+          </label>
+          <label class="asm-opt">
+            <input type="checkbox" id="bom-show-price">
+            <span data-i18n="bom_show_price">Preis anzeigen</span>
+          </label>
+        </div>
         <h3 data-i18n="bom_tubes">Rohre</h3>
         <div id="bom-tubes" class="bom-list"></div>
-        <h3 data-i18n="bom_connectors">Kupplungen (geschätzt)</h3>
+        <h3 data-i18n="bom_connectors">Kupplungen</h3>
         <div id="bom-connectors" class="bom-list"></div>
         <h3 data-i18n="bom_panels">Platten</h3>
         <div id="bom-panels" class="bom-list"></div>
-        <h3 data-i18n="bom_textiles">Netze &amp; Stoffe</h3>
+        <h3 data-i18n="bom_textiles">Textilien</h3>
         <div id="bom-textiles" class="bom-list"></div>
-        <h3 data-i18n="bom_slides">Rutschen &amp; Dächer</h3>
+        <h3 data-i18n="bom_slides">Rutschen</h3>
         <div id="bom-slides" class="bom-list"></div>
+        <h3 data-i18n="bom_wheels">Räder</h3>
+        <div id="bom-wheels" class="bom-list"></div>
+        <h3 data-i18n="bom_fittings">Anbauteile</h3>
+        <div id="bom-fittings" class="bom-list"></div>
         <h3 data-i18n="bom_reinforcements">Verstärkungen</h3>
         <div id="bom-reinforcements" class="bom-list"></div>
+        <h3 id="bom-screws-head" data-i18n="bom_screws">Schrauben</h3>
+        <div id="bom-screws" class="bom-list"></div>
         <div class="totals">
           <div><span data-i18n="total_tubes">Rohre</span><strong id="sum-tubes">0</strong></div>
           <div><span data-i18n="total_connectors">Kupplungen</span><strong id="sum-conn">0</strong></div>
           <div><span data-i18n="total_panels">Platten</span><strong id="sum-panels">0</strong></div>
-          <div><span data-i18n="total_reinforcements">Verstärkungen</span><strong id="sum-reinf">0</strong></div>
+          <div><span data-i18n="total_screws">Schrauben</span><strong id="sum-screws">0</strong></div>
+          <div><span data-i18n="total_other">Sonstiges</span><strong id="sum-other">0</strong></div>
           <div><span data-i18n="total_price">Materialpreis ca.</span><strong id="sum-price">0,00 €</strong></div>
         </div>
+
       </section>
 
-      <section class="panel" id="panel-inventory">
-        <h2 data-i18n="inv_title">Bestand &amp; Machbarkeit</h2>
-        <div id="feasibility-banner" class="feasibility"></div>
-        <div id="inventory-body" class="inv-list"></div>
-        <p class="hint" data-i18n="inv_hint">Trag ein, wie viele Teile du besitzt – der Editor prüft, ob dein Entwurf damit baubar ist.</p>
 
-        <div class="inv-editor-head">
-          <h3 data-i18n="inv_edit_title">Bestand bearbeiten</h3>
-          <div class="inv-actions">
-            <button id="btn-inv-toggle" class="btn ghost small" data-i18n="btn_inv_toggle" data-i18n-title="btn_inv_toggle_title">Bearbeiten</button>
-            <button id="btn-inv-export" class="btn ghost small" data-i18n-title="btn_inv_export_title">⤓ JSON</button>
-            <button id="btn-inv-import" class="btn ghost small" data-i18n-title="btn_inv_import_title">⤒ JSON</button>
-            <input id="inv-file-import" type="file" accept=".json,application/json" hidden>
-          </div>
+
+      <section class="panel" id="panel-own" hidden>
+        <div class="lib-actions">
+          <button id="own-import" class="btn ghost small" data-i18n="btn_import" data-i18n-title="btn_import_title">Import QDF</button>
+          <button id="btn-export-all" class="btn ghost small" data-i18n="btn_export_all" data-i18n-title="btn_export_all_title">Alle herunterladen…</button>
         </div>
-        <div id="inventory-editor" class="inv-editor" hidden></div>
+        <p class="hint sync-line" id="sync-state" hidden></p>
+        <div id="own-list" class="lib-list"></div>
+      </section>
+
+      <section class="panel" id="panel-library" hidden>
+        <p class="hint">
+          <span data-i18n="lib_hint">Lies deine eigene QDF-Sammlung ein (z. B. den Beispiel-Ordner der QUADRO-Software).</span>
+          <!-- Wohin die Dateien gehen, hängt vom Server ab: ui.js setzt den Text. -->
+          <span id="lib-hint-where"></span>
+        </p>
+        <div class="lib-actions">
+          <button id="lib-add-folder" class="btn ghost small" data-i18n="btn_lib_folder" data-i18n-title="btn_lib_folder_title">📂 Ordner…</button>
+          <button id="lib-add-files" class="btn ghost small" data-i18n="btn_lib_files" data-i18n-title="btn_lib_files_title">＋ Dateien…</button>
+          <button id="lib-clear" class="btn ghost small danger" data-i18n="btn_lib_clear" data-i18n-title="btn_lib_clear_title">🗑</button>
+          <input id="lib-file-folder" type="file" accept=".qdf" webkitdirectory directory multiple hidden>
+          <input id="lib-file-list" type="file" accept=".qdf" multiple hidden>
+        </div>
+        <input id="lib-search" class="lib-search" type="search" data-i18n-placeholder="lib_search" placeholder="Suchen…">
+        <div class="lib-sort-row">
+          <label for="lib-sort" data-i18n="lib_sort">Sortierung</label>
+          <select id="lib-sort" class="lang-select"></select>
+          <button id="lib-sort-dir" class="btn ghost small" type="button" data-i18n-title="lib_sort_asc">↑</button>
+        </div>
+        <label class="lib-opt">
+          <input type="checkbox" id="lib-only-feasible">
+          <span data-i18n="lib_only_feasible">Nur mit meinem Bestand baubar</span>
+        </label>
+        <div id="lib-status" class="lib-status"></div>
+        <div id="lib-list" class="lib-list"></div>
       </section>
 
       <section class="panel" id="panel-assembly" hidden>
         <div class="asm-head">
           <h2 data-i18n="asm_title">Aufbau</h2>
-          <button id="asm-print" class="btn ghost small" data-i18n="btn_asm_print" data-i18n-title="btn_asm_print_title">⎙ Drucken</button>
         </div>
+        <div class="asm-order-row">
+          <label for="asm-order" data-i18n="asm_order">Reihenfolge</label>
+          <select id="asm-order" class="lang-select"></select>
+        </div>
+        <label class="asm-opt">
+          <input type="checkbox" id="asm-nocolor">
+          <span data-i18n="asm_ignore_colors">Farben zusammenfassen</span>
+        </label>
         <div class="asm-nav">
           <button id="asm-prev" class="btn" title="‹">‹</button>
           <span id="asm-counter" class="asm-counter">–</span>
           <button id="asm-next" class="btn" title="›">›</button>
         </div>
         <div id="asm-progress" class="asm-progress"><div id="asm-progress-bar"></div></div>
-        <h3 id="asm-title" class="asm-title">–</h3>
         <div id="asm-body" class="asm-body"></div>
-        <p class="hint" data-i18n="asm_hint">Lage für Lage von unten nach oben. Orange = im aktuellen Schritt anbauen, blass = kommt später.</p>
       </section>
     </aside>
+
+    <!-- Schmale Schirme: die Seitenleiste liegt über allem, dieser Hintergrund
+         fängt Klicks daneben ab und schließt sie. -->
+    <div id="sidebar-backdrop"></div>
   </main>
 
-  <div id="print-area"></div>
+  <!-- Tastenkürzel-Liste: wie die Rückfrage-Karte über der ganzen Seite. -->
+  <div id="help-overlay" class="dlg-overlay" hidden>
+    <div class="help-card">
+      <div class="help-head">
+        <h3 data-i18n="help_title">Tastenkürzel</h3>
+        <button id="help-close" class="card-close" data-i18n-title="help_close" title="Schließen">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>
+          </svg>
+        </button>
+      </div>
+      <div id="help-table" class="help-groups"></div>
+    </div>
+  </div>
+
+  <!-- Onboarding-Demo: grauer Schleier über allem, das erklärte Areal bleibt
+       frei (#tour-hole schneidet das Loch), die Karte erklärt es. Lage und Maß
+       von Loch und Karte setzt tour.js je Schritt. -->
+  <div id="tour" hidden>
+    <div id="tour-veil"></div>
+    <div id="tour-hole" class="no-hole"></div>
+    <div id="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+      <h3 id="tour-title"></h3>
+      <p id="tour-text"></p>
+      <!-- Sprachwahl: nur im ersten Schritt zu sehen (siehe tour.js) -->
+      <div id="tour-lang-row" hidden>
+        <label for="tour-lang" data-i18n="settings_language">Sprache</label>
+        <select id="tour-lang" class="lang-select" title="Sprache / Language">
+          <option value="de">&#x1F1E9;&#x1F1EA; DE</option>
+          <option value="en">&#x1F1EC;&#x1F1E7; EN</option>
+        </select>
+      </div>
+      <div class="tour-foot">
+        <span id="tour-step" class="hint"></span>
+        <button id="tour-skip" class="btn ghost" data-i18n="tour_skip">Überspringen</button>
+        <button id="tour-back" class="btn ghost" data-i18n="tour_back">Zurück</button>
+        <button id="tour-next" class="btn" data-i18n="tour_next">Weiter</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Eine Karte für alle Rückfragen und Eingaben (statt Browser-Popups).
+       Titel, Text, Feld und Knöpfe setzt ui.js je Aufruf. Sie liegt bewusst
+       ausserhalb von <main>: solange sie steht, ist die ganze Seite gesperrt,
+       nicht nur die Szene. -->
+  <div id="dlg-overlay" class="dlg-overlay" hidden>
+    <div class="help-card dlg-card" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+      <h3 id="dlg-title"></h3>
+      <p id="dlg-text" class="dlg-text"></p>
+      <input id="dlg-input" class="dlg-input" type="text" autocomplete="off" spellcheck="false" hidden>
+      <div id="dlg-actions" class="ask-actions"></div>
+    </div>
+  </div>
 
   <script type="module" src="./js/main.js"></script>
 </body>

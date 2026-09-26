@@ -1,13 +1,82 @@
+/* Farben stehen AUSSCHLIESSLICH hier -- im Rest der Datei nur noch var(...).
+   Nur so lässt sich das Schema umschalten; ein fester Wert irgendwo unten
+   bleibt im Dunkelmodus weiß stehen. Ausgenommen sind Farben, die nichts mit
+   dem Schema zu tun haben: Produktfarben (Farbrad der Bauteile) und Kacheln,
+   die IMMER dunkel sind (Statuszeile, Beschriftungen über der Szene).
+   Welches Schema gilt, setzt das Skript im <head> als data-theme. */
 :root {
-  --bg: #f4f6f9;
-  --panel: #ffffff;
+  --edge-shadow: rgba(0, 0, 0, 0.30);
+  --bg: #f4f6f9;              /* Arbeitsfläche hinter allem */
+  --panel: #ffffff;           /* Leisten, Karten, Seitenleiste */
+  --surface: #ffffff;         /* Knöpfe, Eingaben, Popups */
+  --surface-2: #f7f9fc;       /* Bauteil-Zeile, Zebrastreifen in Listen */
+  --hover: #f1f4f8;           /* Überfahren (deckend) */
   --line: #e2e7ee;
+  --line-strong: #c4ccd6;     /* Rand beim Überfahren, Ziehgriff */
   --ink: #1f2630;
+  --ink-soft: #45505f;        /* Sinnbild-Knöpfe ohne Rahmen */
+  /* Schrift auf einem Knopf in Bauteil-FARBE. Die Teilefarben sind in beiden
+     Schemata dieselben, also bleibt auch diese Farbe dunkel. */
+  --ink-on-part: #1f2630;
   --muted: #7a8696;
   --accent: #1a8cff;
   --accent-ink: #ffffff;
+  --accent-wash: rgba(26, 140, 255, 0.14);
+  --accent-wash-soft: rgba(26, 140, 255, 0.08);
   --ok: #18a558;
+  --ok-ink: #157f45;          /* Schrift auf hellem Grund */
+  --ok-wash: #e6f7ee;
   --no: #d8443a;
+  --no-ink: #a4243b;          /* Schrift auf hellem Grund */
+  --danger-wash: #fdeceb;
+  --danger-wash-strong: rgba(164, 36, 59, 0.18);
+  --mark-wash: #fff3e3;       /* markierte Bestandszeile */
+  --mark-line: #ffb765;
+  --mark2-wash: #f3e8ff;      /* markierte Aufbau-Zeile */
+  --mark2-line: #c79bff;
+  --wash: rgba(0, 0, 0, 0.06);        /* Tab, Schließen-Kreuz */
+  --wash-strong: rgba(0, 0, 0, 0.1);
+  --chip: rgba(255, 255, 255, 0.94);  /* schwebende Knöpfe über der Szene */
+  --chip-line: rgba(0, 0, 0, 0.13);
+  --veil: rgba(246, 248, 250, 0.92);  /* Schleier über der leeren Szene */
+  --tour-shade: rgba(20, 26, 34, 0.55);  /* Schleier der Onboarding-Demo */
+  color-scheme: light;
+}
+
+/* Dunkles Schema: gedämpftes Anthrazit, keine schwarzen Flächen. */
+:root[data-theme="dark"] {
+  --edge-shadow: rgba(0, 0, 0, 0.65);
+  --bg: #171b21;
+  --panel: #232a33;
+  --surface: #2a323d;
+  --surface-2: #1e242c;
+  --hover: #333c48;
+  /* Deutlich heller als die Flächen: auf dunklem Grund verschwindet ein Rand,
+     der nur wenige Stufen absteht -- die Knöpfe sahen randlos aus. */
+  --line: #454f60;
+  --line-strong: #6b7a8d;
+  --ink: #e6eaf0;
+  --ink-soft: #c8d1dc;
+  --muted: #9aa6b4;
+  --accent: #3d9bff;
+  --accent-wash: rgba(61, 155, 255, 0.20);
+  --accent-wash-soft: rgba(61, 155, 255, 0.12);
+  --ok-ink: #56d98b;
+  --ok-wash: rgba(24, 165, 88, 0.18);
+  --no-ink: #ff8b84;
+  --danger-wash: rgba(216, 68, 58, 0.20);
+  --danger-wash-strong: rgba(216, 68, 58, 0.30);
+  --mark-wash: rgba(224, 140, 26, 0.20);
+  --mark-line: #a86a1e;
+  --mark2-wash: rgba(155, 61, 245, 0.22);
+  --mark2-line: #7d4bbd;
+  --wash: rgba(255, 255, 255, 0.08);
+  --wash-strong: rgba(255, 255, 255, 0.13);
+  --chip: rgba(35, 42, 51, 0.94);
+  --chip-line: rgba(255, 255, 255, 0.14);
+  --veil: rgba(23, 27, 33, 0.92);
+  --tour-shade: rgba(8, 11, 15, 0.68);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -21,11 +90,21 @@ body {
   /* Touch/iPad: kein Gummiband-Scrollen, keine Doppeltipp-Zoom-Verzoegerung */
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
-  touch-action: manipulation;
+  /* Kein Seiten-Zoom: gezoomt wird im 3D-Bild. `manipulation` laesst die
+     Kneifgeste durch, und Chrome ueberhoert `user-scalable=no` -- mit
+     pan-x/pan-y bleibt Scrollen erlaubt, Kneifen und Doppeltipp nicht. */
+  touch-action: pan-x pan-y;
 }
-/* Bedienelemente reagieren ohne 300ms-Verzoegerung; keine Textauswahl beim Tippen */
+/* Bedienelemente reagieren ohne 300ms-Verzoegerung (Zoom bleibt trotzdem aus:
+   `manipulation` schaltet nur den Doppeltipp-Zoom ab, Kneifen faengt der
+   Seiten-Riegel in ui.js ab) */
 .btn, .swatch, .lang-select, select, label { touch-action: manipulation; }
-#toolbar, .group, .seg, .menu-pop { -webkit-user-select: none; user-select: none; }
+/* Nirgends versehentlich Text markieren: beim Ziehen im Bild, beim Doppelklick
+   auf einen Tab oder beim Wischen in einer Liste blieb sonst staendig etwas
+   blau hinterlegt. Eingabefelder sind ausgenommen -- dort gehoert Markieren
+   zum Tippen. */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
 
 /* Toolbar — zweizeilig */
 #toolbar {
@@ -38,8 +117,18 @@ body {
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
-  z-index: 10;
+  /* Über allem, was über der Szene schwebt: Aufbau-Karte (30), Schnittleiste
+     (12), Raster- und Hilfe-Knopf (10). Die Leiste ist ein Flex-Kind und damit
+     ein eigener Stapelkontext -- ihre Menüs (100/300) zählen nur INNERHALB und
+     lagen sonst unter der Aufbau-Karte. Unter Seitenleiste (400), Demo (450)
+     und Rückfrage-Karte (500) bleibt sie. */
+  z-index: 50;
 }
+/* Ein offenes Menü gehört über ALLES, was über der Szene liegt -- auch über die
+   Aufbau-Karte im Hochformat (60). Es steckt in der Kopfzeile und damit in
+   deren Stapelkontext, also hebt sich die ganze Leiste, solange es offen ist
+   (ui.js setzt die Klasse). */
+body.menu-open #toolbar { z-index: 70; }
 
 /* Hauptzeile: scrollbarer linker Teil + fixierter rechter Teil */
 #toolbar-main { display: flex; align-items: stretch; }
@@ -63,8 +152,15 @@ body {
   gap: 8px;
   padding: 6px 14px;
   flex-shrink: 0;
-  border-left: 1px solid var(--line);
   position: relative; /* Anker für Hamburger-Dropdown */
+}
+/* Der Trenner zum linken Teil sieht aus wie jeder andere: ein kurzer Strich
+   in der Mitte. Als Rahmen ginge er ueber die ganze Hoehe der Leiste und fiele
+   neben den .divider-Strichen auf. */
+#toolbar-right::before {
+  content: "";
+  width: 1px; height: 20px; align-self: center;
+  background: var(--line); margin: 0 5px; flex-shrink: 0;
 }
 
 /* Desktop: inner = normaler Inline-Flex-Container */
@@ -91,7 +187,7 @@ body {
   gap: 8px;
   padding: 5px 14px;
   border-top: 1px solid var(--line);
-  background: #f7f9fc;
+  background: var(--surface-2);
   /* Kein overflow hier — nur #grp-build scrollt intern */
 }
 /* Bauteil-Gruppe nimmt alle verfügbare Breite und scrollt intern. */
@@ -107,28 +203,43 @@ body {
 #toolbar-ctx .part-row { flex-wrap: nowrap; }
 /* Farbe-Gruppe und alle anderen ctx-Kinder nicht schrumpfen */
 #toolbar-ctx .group { flex-shrink: 0; }
+/* Auch die einzelnen Knöpfe nicht: "Auswahl" und "Verstärken" hängen direkt in
+   #grp-build (nicht in einer .part-row) und wurden sonst schmaler als ihre
+   Beschriftung gequetscht, statt die Gruppe scrollen zu lassen. */
+#toolbar-ctx .btn { flex-shrink: 0; }
 
-.brand { font-weight: 800; letter-spacing: 0.5px; font-size: 18px; white-space: nowrap; }
-.brand span { color: var(--accent); font-weight: 700; }
+.brand {
+  font-weight: 800; letter-spacing: 0.5px; font-size: 18px; white-space: nowrap;
+  display: flex; align-items: center; gap: 8px;
+}
+/* Dasselbe Symbol wie die installierte App -- eine Quelle, kein zweites Bild. */
+.brand-icon { width: 24px; height: 24px; border-radius: 6px; display: block; flex-shrink: 0; }
+.brand .brand-3d { color: var(--accent); font-weight: 700; }
+/* Reihenfolge bei Platzmangel: erst faellt "3D", dann "QUADRO", zuletzt
+   schrumpft die Marke (siehe measureHead in ui.js). */
+body.head-hide-3d .brand-3d { display: none; }
+body.head-hide-name .brand-name { display: none; }
+body.compact-brand .brand { font-size: 16px; gap: 6px; }
+body.compact-brand .brand-icon { width: 20px; height: 20px; }
 .group { display: flex; align-items: center; gap: 6px; }
 .group > label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
 
 /* Senkrechter Trenner zwischen Toolbar-Bereichen */
-.divider { width: 1px; align-self: stretch; background: var(--line); margin: 2px 2px; flex-shrink: 0; }
+/* EIN Trenner für alle Leisten: gleiche Höhe in der Kopf- und in der
+   Bauteil-Zeile -- vorher sah der eine gestreckt, der andere kurz aus. */
+.divider {
+  width: 1px; height: 20px; align-self: center;
+  background: var(--line); margin: 0 5px; flex-shrink: 0;
+}
+/* Trenner, der nach dem Umhängen von Knöpfen nichts mehr trennt (siehe
+   tidyDividers in ui.js). */
+.divider.divider-off { display: none; }
 
 /* Autosave-Anzeige als kleiner Statuspunkt (jetzt im Entwürfe-Button) */
-.save-dot {
-  width: 9px; height: 9px; border-radius: 50%;
-  background: var(--ok); border: 1px solid #cdeedd;
-  box-shadow: 0 0 0 2px #e9f7ef;
-  flex: 0 0 auto; transition: background 0.2s ease, box-shadow 0.2s ease;
-}
-.save-dot.saving { background: var(--accent); box-shadow: 0 0 0 2px #e8f1ff; }
 
 
 /* Bauteil-Leiste (Rohre + Platten gemeinsam) */
 .part-row { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-.mini-divider { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 .btn.part {
   display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
   padding: 4px 7px; min-width: 36px; line-height: 1.1;
@@ -156,19 +267,35 @@ body {
 
 /* Disabled-Zustand für Part-Buttons (z. B. Undo wenn leer) */
 .btn.part:disabled { opacity: 0.38; cursor: default; }
-.btn.part:disabled:hover { border-color: var(--line); background: #fff; }
+.btn.part:disabled:hover { border-color: var(--line); background: var(--surface); }
 
-/* Farb-Auswahl-Popup (erscheint beim 2. Klick auf aktiven Part-Button) */
-.color-popup {
+/* Varianten-Popup unter den Bauteil-Buttons (Rohre / Platten) */
+.part-popup {
   display: flex;
-  gap: 7px;
-  padding: 8px 10px;
-  background: #fff;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  min-width: 180px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
   z-index: 200;
 }
+.part-popup-row {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 8px;
+  border: none; border-radius: 7px;
+  background: none; color: var(--ink);
+  font-size: 13px; font-family: inherit; text-align: left;
+  cursor: pointer;
+}
+.part-popup-row:hover { background: var(--hover); }
+.part-popup-row.active { background: var(--accent); color: var(--accent-ink); }
+.part-popup-row svg { flex: 0 0 auto; }
+.part-popup-row .pp-name { flex: 1; white-space: nowrap; }
 .btn.icon-btn { display: inline-flex; align-items: center; gap: 5px; }
 .btn.icon-btn svg { display: block; }
 
@@ -182,10 +309,14 @@ body {
 .menu { position: relative; }
 .menu-pop {
   position: absolute; right: 0; top: calc(100% + 6px);
-  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
   padding: 10px; width: 260px;
   max-width: min(260px, calc(100vw - 28px));
+  /* Die Höhe deckelt ui.js beim Öffnen auf den Platz unter dem Knopf -- lange
+     Menüs liefen sonst unten aus dem Bild, und die Seite selbst scrollt nicht. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 100;
   display: flex; flex-direction: column; gap: 8px;
 }
@@ -203,15 +334,21 @@ body {
 .btn.full { width: 100%; justify-content: center; }
 .menu-row .btn.full { flex: 1; }
 .menu-item { text-align: left; justify-content: flex-start; }
-.btn.danger { color: var(--no); }
-.btn.danger:hover { border-color: var(--no); background: #fdeceb; }
+.btn.danger { color: var(--no-ink); }
+.btn.danger:hover { border-color: var(--no); background: var(--danger-wash); }
 .menu-pop hr, .menu-section + .btn { margin-top: 2px; }
+/* Einstellungen: schmaler als das Entwürfe-Menü, Hinweis ohne Extra-Abstand */
+#settings-pop { width: min(240px, calc(100vw - 28px)); }
+#settings-pop select { width: 100%; max-width: none; }
+#settings-pop .hint { margin-top: 2px; }
+/* Fassung: steht ohne Beschriftung allein da, deshalb rechtsbuendig */
+#app-version { align-self: flex-end; }
 /* Quadratische Icon-Buttons */
 .btn.icon-sq { padding: 6px 8px; min-width: 32px; display: inline-flex; align-items: center; justify-content: center; }
 
 .btn {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
   padding: 7px 13px;
   border-radius: 8px;
@@ -219,13 +356,17 @@ body {
   cursor: pointer;
   transition: all 0.12s ease;
 }
-.btn:hover { border-color: #c4ccd6; }
+.btn:hover { border-color: var(--line-strong); }
+/* Gesperrt heisst blass -- gilt für jeden Knopf, nicht nur die Bauteil-Zeile
+   (Zurück/Wieder stehen jetzt oben in der Kopfzeile). */
+.btn:disabled { opacity: 0.38; cursor: default; }
+.btn:disabled:hover { border-color: var(--line); background: var(--surface); }
 .btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-.btn.ghost { padding: 7px 11px; color: #45505f; }
+.btn.ghost { padding: 7px 11px; color: var(--ink-soft); }
 .lang-btn { font-weight: 600; letter-spacing: 0.04em; min-width: 2.8em; }
 .lang-select {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
   padding: 6px 8px;
   border-radius: 8px;
@@ -234,7 +375,7 @@ body {
   transition: border-color 0.12s ease;
   font-family: inherit;
 }
-.lang-select:hover { border-color: #c4ccd6; }
+.lang-select:hover { border-color: var(--line-strong); }
 .lang-select:focus { outline: none; border-color: var(--accent); }
 
 select {
@@ -242,34 +383,119 @@ select {
   border-radius: 8px;
   padding: 7px 9px;
   font-size: 14px;
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
   max-width: 200px;
 }
 
 .swatches { display: flex; gap: 5px; }
 .swatch {
+  background: var(--swatch);
   width: 26px; height: 26px;
   border-radius: 50%;
-  border: 2px solid #fff;
+  border: 2px solid var(--panel);
   outline: 1px solid var(--line);
   cursor: pointer;
   padding: 0;
 }
 .swatch.active { outline: 2px solid var(--ink); transform: scale(1.08); }
+/* Zufallsfarbe: alle Baufarben als Tortenstuecke, damit der Schalter ohne
+   Beschriftung erkennbar ist (Schwarz ist dabei, weil Platten es duerfen). */
+.swatch-random {
+  background: conic-gradient(
+    #d42e2e 0deg 72deg, #2e9e4a 72deg 144deg, #f4c020 144deg 216deg,
+    #1f63b5 216deg 288deg, #2b2b2b 288deg 360deg);
+}
+
+/* --- Kollaps: enge Bauteil-Zeile --------------------------------------- */
+/* Stufe 1 nimmt die Farbreihe weg und zeigt EINEN Swatch-Knopf, Stufe 2 legt
+   die Ansichts-Schalter hinter ein Ausklapp-Panel. Welche Stufe gilt, misst
+   ui.js -- hier steht nur, was die Klasse bewirkt. */
+body.compact-colors #color-buttons,
+body.compact-view .view-row { display: none; }
+/* Der Trenner davor bleibt: er scheidet jetzt Bauteile von den Ansichts-
+   Schaltern. Ob er gebraucht wird, entscheidet tidyDividers in ui.js. */
+/* Im Popup gilt das nicht: dort SOLL die umgehängte Gruppe zu sehen sein. */
+.part-popup #color-buttons,
+.part-popup .view-row { display: flex !important; }
+/* Im Popup werden aus den Icon-Knöpfen Listenzeilen mit Icon UND Name --
+   ohne Beschriftung rät man bei Schnitt/Perspektive nur. Versteckt wird der
+   Name nur DORT, wo er stört: in den Werkzeugleisten selbst. */
+.view-row .pp-name,
+#color-buttons .pp-name,
+.toolbar-icon-row .pp-name { display: none; }
+.part-popup .pp-name,
+/* Mit ID, sonst gewinnt #color-buttons oben und die Farben blieben namenlos. */
+.part-popup #color-buttons .pp-name,
+#menu-file-rows .pp-name { display: block; flex: 1; text-align: left; white-space: nowrap; font-size: 13px; }
+.part-popup.color-popup #color-buttons,
+.part-popup.view-popup .view-row { flex-direction: column; align-items: stretch; gap: 2px; }
+.part-popup.view-popup .btn,
+.part-popup.color-popup .swatch {
+  display: flex; align-items: center; gap: 10px;
+  justify-content: flex-start; text-align: left;
+  width: 100%; padding: 7px 8px;
+  border: none; border-radius: 7px; background: none; outline: none;
+  color: var(--ink); font-family: inherit; min-height: 0;
+}
+.part-popup.view-popup .btn:hover,
+.part-popup.color-popup .swatch:hover { background: var(--hover); }
+.part-popup.view-popup .btn.active,
+.part-popup.color-popup .swatch.active { background: var(--accent); color: var(--accent-ink); }
+/* Der Farbtupfer wandert in ein eigenes Kästchen vor dem Namen. */
+.part-popup.color-popup .swatch { position: relative; padding-left: 36px; transform: none; }
+.part-popup.color-popup .swatch::before {
+  content: ""; position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--swatch); outline: 1px solid var(--line);
+}
+.part-popup.color-popup .swatch-random::before {
+  background: conic-gradient(
+    #d42e2e 0deg 72deg, #2e9e4a 72deg 144deg, #f4c020 144deg 216deg,
+    #1f63b5 216deg 288deg, #2b2b2b 288deg 360deg);
+}
+
+/* Der Ersatz-Knopf für die Farbreihe: Swatch statt Icon */
+#btn-color { padding: 5px 7px; }
+#btn-color .swatch { display: block; pointer-events: none; }
 
 /* Main */
 :root { --sidebar-w: 320px; }
 main { flex: 1; display: flex; min-height: 0; }
 #canvas-wrap { position: relative; flex: 1; min-width: 0; }
-#canvas { position: absolute; inset: 0; touch-action: none; }
-#canvas canvas { display: block; touch-action: none; }
+#canvas { position: absolute; inset: 0; touch-action: none; overflow: hidden; }
+/* Der Canvas folgt immer exakt seinem Container. Feste px-Groessen (von
+   renderer.setSize) wuerden ihn ueber den Container hinauswachsen lassen ->
+   Dokument-Scrollbar -> Container schrumpft -> ResizeObserver -> Flackern. */
+#canvas canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+/* Ladekreisel über der Zeichenfläche. Er läuft nur, solange die abgegriffenen
+   Herstellermodelle unterwegs sind -- in dieser Zeit wird das Modell absichtlich
+   noch gar nicht gezeichnet, sonst blitzten erst die Ersatzformen auf. */
+.scene-spinner {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 28px; height: 28px;
+  margin: -14px 0 0 -14px;
+  border: 3px solid var(--chip-line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  animation: scene-spin 0.8s linear infinite;
+}
+.scene-spinner.visible { opacity: 1; }
+@keyframes scene-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .scene-spinner { animation-duration: 2.4s; }
+}
 
 /* Floating Canvas-Buttons (Tastenkürzel, ggf. weitere) */
 .canvas-btn {
   position: absolute;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(0, 0, 0, 0.13);
+  background: var(--chip);
+  border: 1px solid var(--chip-line);
   border-radius: 8px;
   cursor: pointer;
   padding: 7px 10px;
@@ -279,13 +505,22 @@ main { flex: 1; display: flex; min-height: 0; }
   z-index: 10;
   transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.12s ease;
 }
-.canvas-btn:hover { background: #fff; transform: scale(1.06); box-shadow: 0 4px 14px rgba(0,0,0,0.22); }
+.canvas-btn:hover { background: var(--surface); transform: scale(1.06); box-shadow: 0 4px 14px rgba(0,0,0,0.22); }
 .canvas-btn:active { transform: scale(0.94); }
-#btn-help { bottom: 12px; right: 12px; }
+/* Unten rechts stehen zwei Knoepfe nebeneinander: die Rasterweite ganz aussen,
+   die Tastenkuerzel links daneben. Faellt der Tasten-Knopf auf dem Telefon weg,
+   rueckt die Rasterweite nicht nach -- sie hat ihren festen Platz. */
+#btn-help { bottom: 12px; right: 92px; }
+#btn-grid { bottom: 12px; right: 12px; gap: 6px; font-size: 12px; font-weight: 600; }
 
 /* Szene-Toggle-Icon: Kreis links oben im 3D-Viewport */
+/* Der Knopf sitzt oben links im Bild -- und rueckt so weit nach unten, wie die
+   Schnittebenen-Leiste dort Platz einnimmt (ui.js setzt --slice-inset, genau
+   der Wert, um den auch der Ansichtswuerfel rueckt). Fruehere Regel war eine
+   feste Medienabfrage: der Knopf rutschte ab 760 px auch dann tiefer, wenn gar
+   keine Leiste da war. */
 .scene-icon {
-  position: absolute; top: 12px; left: 12px; z-index: 10;
+  position: absolute; top: calc(12px + var(--slice-inset, 0px)); left: 12px; z-index: 10;
   width: 48px; height: 48px; padding: 0; border: none;
   border-radius: 50%; overflow: hidden; cursor: pointer;
   box-shadow: 0 2px 8px rgba(0,0,0,0.30);
@@ -307,6 +542,24 @@ body.resizing { cursor: col-resize; user-select: none; }
 #sidebar-resizer:hover, body.resizing #sidebar-resizer { opacity: 1; background: var(--accent); }
 body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: none; }
 
+/* Gewähltes Bauteil: oben mittig über der Szene, Gegenstück zur Statuszeile
+   unten links. Zeigt, was gerade "in der Hand" liegt. */
+.current-part {
+  position: absolute;
+  top: 12px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(31, 38, 48, 0.82);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  max-width: 60%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .status {
   position: absolute;
   left: 12px; bottom: 12px;
@@ -315,9 +568,16 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
   padding: 7px 12px;
   border-radius: 8px;
   font-size: 13px;
-  max-width: 70%;
+  /* Unten rechts stehen die Canvas-Knoepfe (Tastenkuerzel, Rasterweite) -- die
+     Zeile darf nicht darunter laufen. */
+  max-width: min(70%, calc(100% - 190px));
   pointer-events: none;
 }
+/* Der Hinweis zum Werkzeug bleibt grau. Kurze Rückmeldungen sagen über die
+   Farbe, was passiert ist: grün = getan, orange = ging nicht, rot = Fehler. */
+.status.status-ok { background: rgba(18, 122, 66, 0.92); }
+.status.status-warn { background: rgba(176, 106, 10, 0.94); }
+.status.status-error { background: rgba(164, 43, 34, 0.94); }
 
 /* Sidebar */
 #sidebar {
@@ -326,7 +586,9 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
   background: var(--panel);
   border-left: 1px solid var(--line);
   overflow-y: auto;
-  padding: 14px;
+  /* Kein Innenabstand oben: die Tab-Leiste sitzt bündig, der Abstand kommt
+     beim Inhalt darunter (.panel). */
+  padding: 0 14px 14px;
 }
 .panel { margin-bottom: 22px; }
 .panel h2 { font-size: 15px; margin: 0 0 10px; }
@@ -345,12 +607,20 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
   border-radius: 6px;
   font-size: 13px;
 }
-.bom-row:nth-child(odd) { background: #f7f9fc; }
+.bom-row:nth-child(odd) { background: var(--surface-2); }
 .bom-row.muted { color: var(--muted); }
 .bom-name { display: flex; align-items: center; gap: 7px; }
+/* Sinnbild je Zeile: feste Spur, damit die Namen untereinander stehen -- auch
+   in Zeilen ohne eigenes Sinnbild (offene Enden, Poolfolie älterer Stände). */
+.bom-icon {
+  flex: 0 0 20px; width: 20px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.bom-icon svg { display: block; }
 .bom-count { font-variant-numeric: tabular-nums; color: var(--muted); }
 .bom-sub { font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
-.dot { width: 11px; height: 11px; border-radius: 50%; outline: 1px solid rgba(0,0,0,0.12); flex-shrink: 0; }
+.dot { width: 11px; height: 11px; border-radius: 50%; outline: 1px solid var(--line); flex-shrink: 0; }
 .muted { color: var(--muted); font-size: 13px; padding: 4px 6px; }
 
 .totals {
@@ -363,14 +633,78 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
 .totals strong { font-variant-numeric: tabular-nums; }
 
 /* Inventory */
+/* Schnittebene: schwebende Leiste oben mittig über dem Viewport */
+#slice-bar {
+  position: absolute;
+  top: 12px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+  padding: 6px 10px;
+  background: var(--chip);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  /* Über dem Szene-Knopf (10): der lag sonst auf den X/Y/Z-Knöpfen. */
+  z-index: 12;
+}
+#slice-bar .btn.small { padding: 4px 9px; font-size: 12px; }
+#slice-bar .seg .btn { min-width: 28px; }
+/* Die Achsen bleiben immer in EINER Zeile; enger wird stattdessen der Regler. */
+#slice-axes { flex: 0 0 auto; }
+#slice-range { width: 220px; min-width: 60px; flex: 1 1 auto; }
+/* Schmale Schirme: die Schnittebene wird zur Leiste unter den Tabs. Sie LIEGT
+   über dem Bild (kein zweiter Streifen im Layout), damit der Canvas nicht
+   schrumpft; der Szene-Knopf rückt darunter, der Ansichtswürfel ebenfalls
+   (scene.setViewCubeInset in ui.js). */
+@media (max-width: 760px) {
+  #slice-bar {
+    top: 0; left: 0; right: 0; transform: none;
+    border-radius: 0; border-left: none; border-right: none; border-top: none;
+    background: var(--panel);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.10);
+    padding: 6px 10px; gap: 8px;
+  }
+  #slice-range { width: auto; }
+  .slice-value { min-width: 46px; }
+}
+.slice-value {
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  color: var(--muted); min-width: 56px; text-align: right;
+}
+
+/* Auswahl-Rechteck im Cursor-Modus (Drag über dem Canvas) */
+.select-box {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: var(--accent-wash);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Aussenmasse des Modells über der Bestandsliste */
+.model-size {
+  display: flex; gap: 6px;
+  margin-bottom: 10px;
+}
+.model-size .dim {
+  flex: 1;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 8px;
+  background: var(--surface-2); border-radius: 8px;
+}
+.model-size .dim-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted);
+}
+.model-size .dim-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
 .feasibility {
   font-size: 13px; font-weight: 600;
   padding: 8px 10px; border-radius: 8px; margin-bottom: 10px;
   min-height: 0;
 }
 .feasibility:empty { display: none; }
-.feasibility.ok { background: #e6f7ee; color: var(--ok); }
-.feasibility.no { background: #fdeceb; color: var(--no); }
+.feasibility.ok { background: var(--ok-wash); color: var(--ok-ink); }
+.feasibility.no { background: var(--danger-wash); color: var(--no-ink); }
 
 .inv-list { display: flex; flex-direction: column; gap: 4px; }
 .inv-row {
@@ -382,12 +716,19 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
   padding: 4px 6px;
   border-radius: 6px;
 }
-.inv-row.bad { background: #fdeceb; }
+.inv-row.bad { background: var(--danger-wash); }
+/* Bestandszeile ist anklickbar; die markierte hebt ihre Teile im Modell hervor.
+   Muss NACH .bad stehen, sonst gewinnt dort der rote Hintergrund. */
+.inv-row { cursor: pointer; }
+.inv-row.marked { background: var(--mark-wash); box-shadow: inset 0 0 0 1px var(--mark-line); }
 .inv-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inv-need { color: var(--muted); font-size: 12px; }
-.inv-input { width: 56px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.inv-input {
+  width: 56px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
+  font-size: 13px; background: var(--surface); color: var(--ink);
+}
 .inv-status { font-size: 12px; color: var(--muted); min-width: 54px; text-align: right; }
-.inv-row.bad .inv-status { color: var(--no); font-weight: 600; }
+.inv-row.bad .inv-status { color: var(--no-ink); font-weight: 600; }
 
 .hint { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.45; }
 
@@ -415,22 +756,98 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
 .btn-row { display: flex; gap: 4px; flex-wrap: wrap; }
 .btn.small { padding: 6px 9px; font-size: 13px; min-width: 34px; font-variant-numeric: tabular-nums; }
 
-/* Hilfe-Overlay */
-.help-overlay {
-  position: absolute; inset: 0;
-  background: rgba(20, 26, 34, 0.45);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 20;
-}
+/* Karten in den Overlays (Hilfe, Rückfragen) */
 .help-card {
-  background: #fff; border-radius: 12px; padding: 20px 22px;
+  background: var(--surface); border-radius: 12px; padding: 20px 22px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-  max-width: 380px; width: 90%;
+  /* So breit, dass zwei Blöcke nebeneinander passen (= vier Spalten:
+     Kürzel, Erklärung, Kürzel, Erklärung), aber nie breiter als der Schirm. */
+  /* Feste Breite statt "so breit wie der Inhalt": nur dann bekommen die
+     Spalten ueberhaupt Platz, sich nebeneinander zu legen. */
+  width: min(860px, 94vw);
+  max-height: min(88vh, 900px);
+  display: flex; flex-direction: column;
 }
-.help-card h3 { margin: 0 0 12px; font-size: 16px; }
-.help-card table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
-.help-card td { padding: 5px 4px; font-size: 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
-.help-card td:first-child { font-weight: 600; white-space: nowrap; padding-right: 14px; }
+/* Kopfzeile der Karte: Titel links, das Kreuz zum Schließen rechts. */
+.help-head { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
+.help-card h3 { margin: 0; font-size: 16px; flex: 1 1 auto; }
+.card-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 30px; height: 30px;
+  border: none; border-radius: 8px; background: none;
+  color: var(--muted); cursor: pointer;
+}
+.card-close:hover { background: var(--wash); color: var(--ink); }
+/* Die Liste ist der einzige Teil, der wächst -- und scrollt, wenn es in der
+   Höhe eng wird. Die Blöcke füllen die Breite in Spalten von ~330 px: eine
+   Spalte auf dem Handy, zwei am Schirm. */
+.help-groups {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  columns: 330px; column-gap: 28px;
+}
+.help-group { break-inside: avoid; margin: 0 0 14px; }
+.help-group h4 {
+  margin: 0 0 4px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--muted);
+}
+.help-group dl {
+  margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0 14px;
+}
+.help-group dt {
+  font-weight: 600; white-space: nowrap; font-size: 13px;
+  padding: 4px 0; border-bottom: 1px solid var(--line);
+}
+.help-group dd {
+  margin: 0; font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--line);
+}
+
+/* Modell-Bibliothek */
+/* Zustand des Server-Abgleichs. Steht nur da, wenn die Verbindung in dieser
+   Sitzung schon einmal stand -- ohne Server sagt die Liste nichts dazu. */
+.sync-line { margin: 0 0 8px; display: flex; align-items: center; gap: 6px; }
+.sync-line::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: #2ea043; flex: 0 0 auto;
+}
+.sync-line.sync-off::before { background: #d29922; }
+
+.lib-actions { display: flex; gap: 4px; margin: 10px 0 8px; }
+.lib-actions .btn { flex: 1; }
+.lib-actions .btn.danger { flex: 0 0 auto; }
+.lib-search {
+  width: 100%; padding: 6px 9px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink);
+}
+.lib-search:focus { outline: none; border-color: var(--accent); }
+/* Sortierzeile der Bibliothek: Beschriftung, Auswahl, Richtungsknopf. Die
+   Auswahl nimmt den Platz, der übrig bleibt. */
+.lib-sort-row { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; }
+.lib-sort-row label { font-size: 12px; color: var(--muted); }
+.lib-sort-row select { flex: 1; min-width: 0; }
+.lib-sort-row .btn { flex: 0 0 auto; padding: 4px 9px; }
+
+.lib-opt { display: flex; align-items: center; gap: 7px; font-size: 12px; margin: 8px 0 4px; cursor: pointer; }
+.lib-status { font-size: 11px; color: var(--muted); min-height: 1.2em; margin-bottom: 6px; }
+.lib-list { display: flex; flex-direction: column; gap: 4px; }
+.lib-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; column-gap: 8px; row-gap: 2px;
+  padding: 7px 9px; text-align: left; font-family: inherit;
+  border: 1px solid var(--line); border-left: 3px solid var(--line);
+  border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.lib-row > .lib-row-head { grid-column: 1 / -1; }
+.lib-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lib-row:hover { border-color: var(--accent); border-left-color: var(--accent); }
+.lib-row.ok { border-left-color: var(--ok); }
+.lib-row-head { display: flex; align-items: baseline; gap: 8px; }
+.lib-name { flex: 1; font-size: 13px; font-weight: 600; }
+.lib-badge {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--no-ink); flex: 0 0 auto;
+}
+.lib-row.ok .lib-badge { color: var(--ok-ink); }
+.lib-meta { font-size: 11px; color: var(--muted); }
 
 /* Aufbaumodus */
 .asm-head { display: flex; align-items: center; justify-content: space-between; }
@@ -441,122 +858,569 @@ body.sidebar-hidden #sidebar, body.sidebar-hidden #sidebar-resizer { display: no
 .asm-counter { flex: 1; text-align: center; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .asm-progress { height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
 #asm-progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.15s ease; }
-.asm-title { font-size: 14px; color: var(--ink); margin: 0 0 8px; text-transform: none; letter-spacing: 0; }
 .asm-body { display: flex; flex-direction: column; gap: 2px; }
 .asm-cat { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin: 12px 0 4px; }
 .asm-row {
   display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center;
   padding: 6px 6px; border-radius: 6px; font-size: 13px;
 }
-.asm-row:nth-child(even) { background: #f7f9fc; }
+.asm-row:nth-child(even) { background: var(--surface-2); }
 .asm-name { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .asm-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
-.asm-badge {
-  font-size: 11px; font-weight: 700; color: #45505f;
-  background: #eef2f7; border: 1px solid var(--line); border-radius: 5px;
-  padding: 1px 6px; font-variant-numeric: tabular-nums;
+/* Zeilen sind anklickbar: hebt die Teile des Schritts im Modell hervor.
+   Muss NACH .asm-row:nth-child(even) stehen, sonst gewinnt der Zebrastreifen. */
+.asm-row { cursor: pointer; }
+.asm-row.marked { background: var(--mark2-wash); box-shadow: inset 0 0 0 1px var(--mark2-line); }
+.asm-opt {
+  display: flex; align-items: center; gap: 7px;
+  margin: 2px 0 8px; font-size: 12px; color: var(--muted); cursor: pointer;
+}
+.asm-opt input { cursor: pointer; }
+
+/* Responsive — das Layout richtet sich NICHT nach festen Breakpoints, sondern
+   nach dem, was ui.js misst und als Klasse auf <body> setzt:
+   compact-colors / compact-view  — Bauteil-Zeile wird eng (Kollaps-Stufen)
+   compact-head                   — Kopfzeile wird eng (Menü-Knopf)
+   sidebar-overlay                — Seitenleiste legt sich über die Seite
+   mobile-portrait                — Telefon im Hochformat (Bedienung unten) */
+
+/* Kopfzeile: nichts wird gequetscht -- läuft die Zeile über, klappt ui.js
+   stufenweise ein (erst "Automatisch speichern", dann das Menü). */
+#toolbar-left > * { flex-shrink: 0; }
+/* Stufe 1: nur noch der Kasten, der Text wandert in den Tooltip. */
+body.compact-autosave #toolbar-left .autosave-toggle span { display: none; }
+body.compact-autosave #toolbar-left .autosave-toggle { padding: 0 2px; }
+
+/* --- Enge Kopfzeile ----------------------------------------------------
+   Reicht der Platz oben nicht, bleiben Datei, Zurück und Wieder stehen; alles
+   Weitere hängt ui.js in das Menü (#toolbar-right-inner), der Seitenleisten-
+   Schalter rückt neben den Menü-Knopf. */
+/* Der Name bleibt vollständig stehen -- "Quadro Builder" ist die App, ein halber
+   Name spart kaum Platz. Eng wird stattdessen die Schrift. */
+body.compact-head .hide-mobile { display: none !important; }
+body.compact-head #toolbar-left  { padding: 5px 10px; gap: 6px; }
+body.compact-head #toolbar-right { padding: 5px 8px; gap: 4px; }
+body.compact-head #toolbar-right::before { display: none; }
+body.compact-head #btn-hamburger { display: inline-flex !important; }
+
+body.compact-head #toolbar-right-inner {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.13);
+  padding: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 220px;
+  /* Deckel wie bei den Popups (ui.js misst beim Öffnen nach). Das
+     Einstellungs-Popup darin liegt fixiert über dem Fenster und wird von
+     diesem Rahmen deshalb nicht abgeschnitten. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  z-index: 300;
+}
+body.compact-head #toolbar-right-inner.open { display: flex; }
+/* Im Menü stehen die Einträge untereinander und über die volle Breite. */
+body.compact-head #menu-extra { display: flex; flex-direction: column; gap: 6px; }
+body.compact-head #menu-extra .group.seg { width: 100%; }
+body.compact-head #menu-extra .group.seg .btn { flex: 1 1 0; }
+/* Im Menü sind auch die Icon-Knöpfe Listenzeilen mit Namen -- und die
+   Einstellungen stehen direkt unter den Datei-Einträgen. */
+body.compact-head #toolbar-right-inner { display: none; }
+body.compact-head #toolbar-right-inner.open { display: flex; }
+body.compact-head #menu-file-rows { order: 1; }
+body.compact-head #toolbar-right-inner .toolbar-icon-row { order: 2; display: flex; flex-direction: column; gap: 2px; }
+body.compact-head #menu-extra { order: 3; }
+body.compact-head #toolbar-right-inner .toolbar-icon-row .btn,
+body.compact-head #toolbar-right-inner .menu { width: 100%; }
+body.compact-head #toolbar-right-inner .toolbar-icon-row .btn {
+  display: flex; align-items: center; gap: 10px;
+  justify-content: flex-start; padding: 7px 8px;
+  border: none; border-radius: 7px; background: none; min-width: 0;
+}
+body.compact-head #toolbar-right-inner .toolbar-icon-row .btn:hover { background: var(--hover); }
+body.compact-head #toolbar-right-inner .toolbar-icon-row .pp-name {
+  display: block; font-size: 13px; text-align: left;
+}
+body.compact-head #toolbar-right-inner .divider {
+  width: 100%; height: 1px; background: var(--line); margin: 3px 0;
 }
 
-/* Responsive — ab 768 px aufwärts gilt das volle Desktop-Layout.
-   Strategie: zwei Stufen
-   ≤768px  — kompakte Darstellung
-   ≤480px  — nur Kern-Teile in der Bauteil-Leiste */
-
-/* ≤768 px: Hamburger-Modus */
-@media (max-width: 768px) {
-  /* Brand: "Builder" weglassen, nur QUADRO zeigen */
-  .brand span { display: none; }
-
-  /* Keyboard-Button + andere Desktop-only Elemente ausblenden */
-  .hide-mobile { display: none !important; }
-
-  /* Toolbar: Hauptzeile kompakter */
-  #toolbar-left  { padding: 5px 10px; gap: 6px; }
-  #toolbar-right { padding: 5px 8px;  gap: 0; border-left: none; }
-  #toolbar-ctx   { padding: 4px 10px; }
-
-  /* Hamburger-Button einblenden */
-  #btn-hamburger { display: inline-flex !important; }
-
-  /* toolbar-icon-row wird zur echten Flex-Zeile im Dropdown */
-  #toolbar-right-inner .toolbar-icon-row {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-  }
-  /* Divider innerhalb der Icon-Zeile bleibt vertikal */
-  #toolbar-right-inner .toolbar-icon-row .divider {
-    width: 1px;
-    height: 20px;
-    margin: 0 2px;
-  }
-
-  /* Inner: standardmäßig verborgen — wird per .open gezeigt */
-  #toolbar-right-inner {
-    display: none;
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    background: #fff;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: 0 6px 24px rgba(0,0,0,.13);
-    padding: 8px;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 4px;
-    min-width: 220px;
-    z-index: 300;
-  }
-
-  #toolbar-right-inner.open { display: flex; }
-
-  /* Trennlinien werden horizontal */
-  #toolbar-right-inner .divider {
-    width: 100%;
-    height: 1px;
-    background: var(--line);
-    margin: 3px 0;
-  }
-
-  /* Entwürfe-Button volle Breite */
-  #toolbar-right-inner #btn-file {
-    width: 100%;
-    justify-content: flex-start;
-  }
-  #toolbar-right-inner #file-menu { width: 100%; }
-
-  /* Sprach-Dropdown volle Breite */
-  #toolbar-right-inner .lang-select { width: 100%; }
-
-  /* file-pop: volle Viewport-Breite auf Mobile */
-  #file-pop {
-    position: fixed;
-    right: 8px;
-    left: 8px;
-    width: auto;
-    top: auto;
-  }
+/* --- Seitenleiste als Overlay ------------------------------------------
+   Ab schmalen Schirmen legt sie sich über Canvas UND Werkzeugleisten und
+   verhält sich wie ein Menü: Hintergrund abgedunkelt, Klick daneben schließt. */
+body.sidebar-overlay #sidebar {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: min(360px, 88vw);
+  z-index: 400;
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.18);
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  /* Sie fährt von rechts herein wie ein übliches Menü. Geschlossen steht sie
+     neben dem Bild -- display:none würde die Bewegung verschlucken, deshalb
+     hebt die Regel unten das Ausblenden im Overlay-Modus auf. */
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+}
+body.sidebar-overlay.sidebar-hidden #sidebar {
+  display: block;
+  transform: translateX(100%);
+  pointer-events: none;
+}
+/* Der Hintergrund blendet mit -- ohne hidden-Attribut, sonst schluckt
+   `[hidden] { display: none !important }` die Blende. */
+#sidebar-backdrop { opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+#sidebar-backdrop.open { opacity: 1; pointer-events: auto; }
+body.sidebar-overlay #sidebar-resizer { display: none; }
+/* Schließen-Kreuz gehört zur überlagernden Leiste; im Desktop-Layout schließt
+   der Schalter oben rechts, dort wäre es doppelt. */
+.sidebar-close { display: none; }
+body.sidebar-overlay .sidebar-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; align-self: center;
+  width: 30px; height: 30px; margin-left: 4px;
+  border: none; border-radius: 8px; background: none;
+  color: var(--muted); cursor: pointer;
+}
+body.sidebar-overlay .sidebar-close:hover { background: var(--wash); color: var(--ink); }
+#sidebar-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(20, 26, 34, 0.35);
+  z-index: 390;
 }
 
-/* ≤480 px: nur Kern-Teile in der Bauteil-Leiste */
-@media (max-width: 480px) {
-  /* Nicht-essentielle Tubes (10, 20, 25, 52 cm) und Platten (80er) ausblenden */
-  .hide-narrow { display: none !important; }
+/* --- Hochformat: Bedienung nach unten ---------------------------------- */
+/* Der Datei-Knopf fällt weg -- seine Einträge stehen im Menü, das auch ein
+   Tipp auf die Marke öffnet. */
+body.mobile-portrait #file-actions { display: none; }
+body.mobile-portrait .brand { cursor: pointer; }
+body.mobile-portrait .brand:active { opacity: 0.6; }
+#menu-file-rows { display: flex; flex-direction: column; gap: 2px; }
+#menu-file-rows + #menu-extra { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 2px; }
+#menu-file-rows[hidden] + #menu-extra { border-top: none; padding-top: 0; margin-top: 0; }
+
+body.mobile-portrait #work { flex-direction: column; }
+body.mobile-portrait #tab-bar     { order: 1; }
+body.mobile-portrait #canvas-wrap { order: 2; }
+body.mobile-portrait #toolbar-ctx {
+  order: 3;
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+  padding-bottom: max(5px, env(safe-area-inset-bottom));
+  padding-left: max(10px, env(safe-area-inset-left));
+  padding-right: max(10px, env(safe-area-inset-right));
+}
+/* Trenner kosten in der unteren Leiste nur Breite -- die Gruppen stehen dort
+   ohnehin dicht an dicht und werden gescrollt. */
+body.mobile-portrait #toolbar-ctx .divider { display: none; }
+/* Ein einziger Entwurf braucht keine Tableiste -- die Zeile ist Canvas wert. */
+body.mobile-portrait #tab-bar.single { display: none; }
+
+/* --- Aufbau als Karte über der Szene ----------------------------------- */
+#asm-sheet {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 30;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.14);
+  display: flex;
+  flex-direction: column;
+  max-height: 80%;
+  /* Die Höhe setzt ui.js in Pixeln: eingeklappt die Ruhehöhe, aufgeklappt die
+     halbe Szene, dazwischen beim Ziehen jeder Wert. Aufgeklappt IMMER gleich
+     hoch -- sonst springt die Karte bei jedem Schrittwechsel, weil mal drei und
+     mal zwölf Teile in der Liste stehen. */
+  transition: height 0.18s ease;
+}
+/* Hochformat: die Karte beginnt ganz unten am Fensterrand und legt sich über
+   die untere Werkzeugleiste -- die trägt im Aufbau-Modus ohnehin nur gesperrte
+   Knöpfe. Bewusst überlagert statt ausgeblendet: die Zeichenfläche soll beim
+   Moduswechsel ihre Größe behalten. */
+body.mobile-portrait #asm-sheet {
+  position: fixed;
+  z-index: 60;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* Während der Finger zieht, folgt die Karte ohne Übergang. */
+#asm-sheet.dragging, #asm-sheet.no-anim { transition: none; }
+/* ... und die Liste rührt sich dabei nicht: sonst wächst die Karte, während
+   der gerade eingeblendete Inhalt unter dem Finger wegscrollt. */
+#asm-sheet.dragging #asm-sheet-body { overflow: hidden; touch-action: none; }
+/* Eingeklappt gibt es nichts zu scrollen -- und vor allem darf der Browser die
+   Wischgeste gar nicht erst als Scrollen beanspruchen. Er entscheidet das im
+   Compositor, BEVOR das erste touchmove bei uns ankommt; ein preventDefault
+   käme dann zu spät und die Liste flöge beim Loslassen weiter. */
+#asm-sheet:not(.open) #asm-sheet-body { touch-action: none; }
+.asm-sheet-handle {
+  border: none; background: none; padding: 10px 0 6px; cursor: pointer;
+  display: flex; justify-content: center; flex: 0 0 auto;
+  /* Der Wisch gehört dem Griff, nicht dem Scrollen der Seite. */
+  touch-action: none;
+}
+.asm-sheet-grip {
+  display: block; width: 42px; height: 4px; border-radius: 2px; background: var(--line-strong);
+}
+#asm-sheet-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px 10px;
+  /* Gescrollt wird nur innerhalb der Liste. Ob aus einem senkrechten Wisch
+     Scrollen oder ein Zug an der Karte wird, entscheidet ui.js anhand der
+     Scrollposition (touchmove mit preventDefault). */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+/* Eingeklappt bleiben Schrittzähler, Fortschritt und Titel stehen; die
+   Teileliste kommt erst beim Aufklappen. Während des Ziehens ist sie schon da,
+   sonst zöge man an einer leeren Fläche. */
+#asm-sheet:not(.open):not(.dragging) #asm-body,
+#asm-sheet:not(.open):not(.dragging) .asm-order-row,
+#asm-sheet:not(.open):not(.dragging) .asm-opt,
+#asm-sheet:not(.open):not(.dragging) .asm-head,
+#asm-sheet:not(.open):not(.dragging) .hint { display: none; }
+#asm-sheet .panel { margin: 0; }
+#asm-sheet .asm-nav { margin: 0 0 8px; }
+#asm-sheet .asm-nav .btn { flex: 1 1 0; min-height: 44px; font-size: 20px; }
+/* Statusmeldung nicht an den Rand der unteren Leiste kleben lassen. */
+/* Auf dem Telefon faellt der Tastenkuerzel-Knopf weg, der Rasterweiten-Knopf
+   bleibt -- so viel Platz muss die Zeile ihm lassen. */
+body.mobile-portrait .status { bottom: 16px; max-width: calc(100% - 120px); }
+/* Steht die Aufbau-Karte unten im Bild, gehoert die Statuszeile UEBER sie --
+   sonst liegt der Hinweis zum laufenden Schritt darunter und ist weg. Die Hoehe
+   der Karte meldet ein ResizeObserver in ui.js als --asm-sheet-h; beim Ziehen
+   wandert die Zeile also mit. */
+body.asm-sheet-on .status { bottom: calc(var(--asm-sheet-h, 0px) + 12px); }
+
+/* --- Touch: größere Ziele ---------------------------------------------
+   Mit dem Finger trifft man 26-px-Knöpfe schlecht; auf Zeigern ohne feine
+   Auflösung wachsen die Bedienelemente auf ~40 px. */
+@media (pointer: coarse) {
+  .btn { min-height: 40px; }
+  .btn.part { min-height: 44px; padding: 5px 9px; }
+  .btn.icon-sq { min-width: 40px; }
+  .side-tab { padding: 11px 6px; }
+  .tab { padding-top: 9px; padding-bottom: 9px; }
+  .own-tools button, .lib-row button { min-width: 38px; min-height: 34px; }
+  .part-popup-row { padding: 10px 8px; }
+  .swatch { width: 30px; height: 30px; }
+  /* Popups dürfen breiter werden -- die Liste soll lesbar bleiben. */
+  .part-popup { min-width: min(62vw, 260px); }
+  .part-popup.color-popup { max-width: min(80vw, 260px); }
 }
 
-/* Druckbereich (nur beim Drucken sichtbar) */
-#print-area { display: none; }
-@media print {
-  body * { visibility: hidden; }
-  #print-area, #print-area * { visibility: visible; }
-  #print-area {
-    display: block; position: absolute; left: 0; top: 0; width: 100%;
-    padding: 0 8mm; color: #000; font-size: 12pt;
-  }
-  #print-area h1 { font-size: 20pt; margin: 0 0 12px; }
-  #print-area .p-step { break-inside: avoid; margin-bottom: 12px; }
-  #print-area h2 { font-size: 14pt; margin: 10px 0 4px; border-bottom: 1px solid #888; padding-bottom: 3px; }
-  #print-area ul { margin: 4px 0 0; padding-left: 20px; }
-  #print-area li { margin: 2px 0; }
+/* --- Datei-Tabs -------------------------------------------------------- */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  min-height: 34px;
 }
+/* Waagerecht scrollbare Leisten (Tabs, Bauteil-Gruppe, linke Kopfzeile) zeigen
+   am rechten Ende einen schmalen Schatten, solange dort noch etwas kommt --
+   sonst schneidet der Bereich hart am Nachbarn (+-Knopf, Farbwahl) ab und man
+   sieht nicht, dass sich scrollen lohnt.
+   Ein Innenschatten am Bereich selbst taugt dafuer nicht: seine Kinder (Tabs,
+   Knoepfe) malen darueber, ein aktiver Tab verdeckte ihn ganz. Der Streifen ist
+   deshalb ein eigenes Element UEBER dem Bereich; ui.js legt es an, misst seine
+   Lage und blendet es ein. */
+.scroll-fade {
+  position: absolute;
+  width: 16px;
+  pointer-events: none;
+  z-index: 6;
+  background: linear-gradient(to right, transparent, var(--edge-shadow));
+}
+
+.tab-list {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  flex: 1 1 auto;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: var(--wash);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  max-width: 240px;
+}
+.tab:hover { background: var(--wash-strong); }
+/* Aktiver Entwurf: blau wie ein aktiver Knopf -- so sieht man auf einen Blick,
+   welches Modell gerade offen ist. */
+.tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.tab.active:hover { background: var(--accent); }
+.tab.active .tab-close { opacity: 0.85; }
+.tab.active .tab-close:hover { background: rgba(255, 255, 255, 0.25); opacity: 1; }
+.tab.active .tab-dirty { background: var(--surface); }
+.tab-name { overflow: hidden; text-overflow: ellipsis; }
+/* Vorschau-Tab (ein Klick in der Liste): kursiv wie in VS Code -- er wird vom
+   nächsten Vorschau-Klick ersetzt, solange niemand darin baut. */
+.tab.preview .tab-name { font-style: italic; }
+.tab-dirty {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #e08c1a;
+  flex: 0 0 auto;
+}
+.tab-close {
+  border: none; background: none; cursor: pointer;
+  font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+  color: inherit; opacity: 0.55;
+}
+.tab-close:hover { opacity: 1; background: var(--wash-strong); }
+.tab-new {
+  border: none; background: none; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0 10px; border-radius: 6px;
+  color: inherit; opacity: 0.7;
+}
+.tab-new:hover { opacity: 1; background: var(--wash); }
+
+.ask-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+
+/* Dialog: liegt über der ganzen Seite -- Kopfzeile, Toolbar und Seitenleiste
+   sind gesperrt, solange die Karte steht. */
+.dlg-overlay {
+  position: fixed; inset: 0;
+  background: rgba(20, 26, 34, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  /* Über allem: eine Rückfrage kommt meist AUS der Seitenleiste (Entwurf
+     löschen, umbenennen). Steht sie darunter, ist sie im Overlay-Modus
+     (schmales Fenster) nicht zu sehen -- und die Leiste nicht bedienbar,
+     weil der Dialog jeden Klick abfängt. */
+  z-index: 500;
+}
+
+/* Dialogkarte: Text und Eingabefeld der gemeinsamen Rückfrage-Karte */
+.dlg-text { margin: 0; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
+.dlg-input {
+  width: 100%; margin-top: 12px; padding: 7px 10px; font-size: 13px; font-family: inherit;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink);
+  box-sizing: border-box;
+}
+.dlg-input:focus { outline: none; border-color: var(--accent); }
+
+/* Kein Modell offen: Einstiegskarte über der leeren Szene */
+.empty-state {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--veil);
+  z-index: 5;
+}
+.empty-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px 28px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+  max-width: 420px;
+  text-align: center;
+}
+.empty-card h2 { margin: 0 0 6px; font-size: 17px; }
+.empty-card p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.empty-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
+/* --- Seitenleiste: Tabs ------------------------------------------------ */
+.side-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.side-tab {
+  flex: 1 1 0;
+  border: none;
+  background: none;
+  padding: 7px 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: inherit;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.side-tab:hover { opacity: 1; }
+.side-tab.active { opacity: 1; font-weight: 600; border-bottom-color: currentColor; }
+
+.bom-row.bad { color: var(--no-ink); }
+.bom-row.marked { background: var(--accent-wash); border-radius: 6px; }
+.bom-row .inv-status { min-width: 34px; text-align: right; font-size: 11.5px; opacity: 0.8; }
+
+/* Arbeitsbereich: Bauteil-Zeile, Datei-Tabs und Szene stehen links, die
+   Seitenleiste reicht daneben bis unter die oberste Leiste. */
+#work { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#work #canvas-wrap { flex: 1; min-height: 0; }
+#sidebar { align-self: stretch; }
+
+/* Stückliste: Name | Anzahl | Bestand | Preis -- alles in EINER Zeile. */
+.bom-row {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 6px;
+}
+.bom-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bom-stock {
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  opacity: 0.85;
+  min-width: 46px;
+  text-align: right;
+}
+/* Bestand reicht nicht: die ganze Zeile leicht rot hinterlegen. */
+.bom-row.bad, .bom-row.bad:nth-child(odd) { background: var(--danger-wash); }
+.bom-row.bad .bom-stock { color: var(--no-ink); font-weight: 600; }
+
+/* Zeilen der Stückliste, die Teile im Modell hervorheben, sind anklickbar. */
+.bom-row.clickable { cursor: pointer; }
+.bom-row.clickable:hover { background: var(--accent-wash-soft); }
+.bom-row.bad.clickable:hover { background: var(--danger-wash-strong); }
+
+/* Eintrag unter "Meine Modelle": links Name, Anzahl und Datum, rechts die
+   Werkzeuge -- alles in einer Zeile. */
+/* Ein Modell-Eintrag stapelt vier Zeilen: Name samt Abzeichen, die Teilezahlen
+   ueber die VOLLE Breite (nebeneinander mit den Knoepfen wurden sie umgebrochen),
+   darunter Masse und Datum neben den Werkzeugen. */
+/* Spalte statt Raster -- und `align-items` aus .lib-row zuruecknehmen, sonst
+   staenden Name und Teilezeile mittig statt linksbuendig. */
+.own-row { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+.own-kopf { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.own-kopf .lib-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.own-fuss { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.own-daten { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.own-tools { display: flex; gap: 2px; flex: 0 0 auto; }
+.own-tools .btn { padding: 3px; }
+
+/* Auto-Save-Schalter in der Kopfzeile, neben "Speichern unter". */
+.autosave-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--muted);
+  padding: 0 6px; white-space: nowrap; cursor: pointer;
+}
+.autosave-toggle input { margin: 0; cursor: pointer; }
+
+/* Tabs umsortieren: der gezogene Tab hebt sich ab, der Rest rutscht weiter. */
+body.tab-dragging { cursor: grabbing; user-select: none; }
+body.tab-dragging .tab { cursor: grabbing; }
+.tab.dragging {
+  opacity: 0.75;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px);
+}
+
+/* Aufbau-Modus: die Bauteil-Zeile bleibt stehen, das Bauen ist gesperrt. */
+#toolbar-ctx.locked .btn[disabled],
+#toolbar-ctx.locked button[disabled] { opacity: 0.4; cursor: not-allowed; }
+#toolbar-ctx.locked .swatch[disabled] { opacity: 0.35; cursor: not-allowed; }
+
+/* Werkzeuge und Schalter über der Stückliste */
+.bom-tools { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 4px; }
+.bom-opts { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.bom-row .inv-input { width: 58px; }
+/* Nachschlagen beim Hersteller: unauffällig, bis der Zeiger darauf steht. */
+.part-info {
+  flex: 0 0 auto; margin-left: 6px; line-height: 0;
+  display: inline-flex; align-items: center;
+  text-decoration: none; color: var(--muted); opacity: 0.65;
+}
+.part-info svg { display: block; }
+.part-info:hover { opacity: 1; color: var(--accent); }
+/* Mit dem Finger: größere Trefferfläche, ohne die Zeile höher zu machen. */
+@media (pointer: coarse) {
+  .part-info { margin-left: 2px; padding: 6px; }
+}
+
+/* Mengen-Spalte: rechtsbündig, damit die Zahlen aller Zeilen untereinander
+   stehen (auch die Hinweiszeile "Offene Enden"). */
+.bom-count { text-align: right; min-width: 44px; }
+
+/* Die Tab-Leiste der Seitenleiste klebt oben, der Inhalt darunter bekommt Luft. */
+.side-tabs {
+  position: sticky; top: 0; z-index: 2;
+  margin: 0 -14px;
+  padding: 6px 14px 0;
+  background: var(--panel);
+}
+#sidebar .panel { margin-top: 14px; }
+
+/* Knöpfe, die nur ein Sinnbild tragen (Zurück/Wieder). */
+.btn.icon-only { padding: 5px 7px; }
+.btn.icon-only svg { display: block; }
+
+/* Bis der Katalog da ist, sind die Bauteil-Knöpfe noch nicht gebaut. Die
+   Leiste bleibt so lange unsichtbar und erscheint dann vollständig, statt dass
+   die Knöpfe einzeln hineinspringen. */
+body.booting #toolbar-ctx,
+body.booting #tab-bar,
+body.booting #sidebar { visibility: hidden; }
+
+/* --- Onboarding-Demo --------------------------------------------------- */
+/* Liegt über Seitenleiste (400) und Menüs (300), aber UNTER der
+   Rückfrage-Karte (.dlg-overlay, 500) -- eine Rückfrage muss auch dann noch
+   bedienbar sein, wenn die Demo läuft. */
+#tour {
+  position: fixed; inset: 0; z-index: 450;
+  pointer-events: none;
+}
+/* Der Schleier selbst ist unsichtbar: die Fläche zeichnet der Schlagschatten
+   des Lochs. Er fängt aber jede Zeigergeste ab -- während der Demo wird nicht
+   gebaut, gedreht oder umgeschaltet. */
+#tour-veil { position: absolute; inset: 0; pointer-events: auto; }
+/* Das Loch: ein Rechteck ohne Füllung, dessen Schlagschatten den ganzen Rest
+   der Seite grau legt. Ein Knoten statt vier Streifen -- und der Wechsel
+   zwischen zwei Schritten lässt sich so animieren. */
+#tour-hole {
+  position: absolute;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px var(--tour-shade);
+  outline: 2px solid var(--accent);
+  pointer-events: none;
+  transition: left 0.22s ease, top 0.22s ease, width 0.22s ease, height 0.22s ease;
+}
+/* Ohne Areal (Begrüßung) liegt der Schleier ungelocht über allem: das Loch
+   schrumpft auf einen Punkt in der Mitte, sein Schatten bleibt. */
+#tour-hole.no-hole { left: 50%; top: 50%; width: 0; height: 0; outline: none; }
+#tour-card {
+  position: absolute;
+  width: min(380px, 92vw);
+  box-sizing: border-box;
+  background: var(--surface); color: var(--ink);
+  border-radius: 12px; padding: 16px 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
+}
+#tour-card h3 { margin: 0 0 6px; font-size: 15px; }
+#tour-card p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-soft); }
+/* Sprachwahl im Begrüßungsschritt: eine Zeile Beschriftung + Auswahlfeld. */
+#tour-lang-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 12px;
+}
+#tour-lang-row[hidden] { display: none; }
+#tour-lang-row label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+#tour-lang { flex: 0 0 auto; }
+.tour-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+/* Die Schrittzahl steht links, die Knöpfe rechts. */
+#tour-step { flex: 1 1 auto; }

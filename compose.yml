@@ -1,0 +1,24 @@
+# Quadro Builder with backend.
+#
+#   docker compose up -d          app at http://localhost:8000/web/index.html
+#
+# `:1` follows every minor and patch of the 1.x line; pin `:1.0.0` for a fixed
+# version. To build from source, use compose.dev.yml.
+#
+# Saved models and the QDF collection live in the volume `quadro-data` as plain
+# files -- a backup is a plain copy.
+#
+# NOTE: the server has neither login nor TLS. It belongs on your own network,
+# not openly on the internet (see README).
+
+services:
+  quadro:
+    image: ghcr.io/k3mpaxl/quadro-builder:1
+    ports:
+      - "8000:8000"
+    volumes:
+      - quadro-data:/data
+    restart: unless-stopped
+
+volumes:
+  quadro-data: {}

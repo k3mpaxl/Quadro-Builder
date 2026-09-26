@@ -1,0 +1,12 @@
+.git/
+.gitignore
+.github/
+tmp/
+data-store/
+docs/screenshots/
+*.qdf
+model*.json
+__pycache__/
+*.pyc
+.venv/
+venv/
