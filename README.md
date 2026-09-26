@@ -2,16 +2,16 @@
 
 <img src="icons/icon-192.png" alt="" width="96" height="96">
 
-# QUADRO 3D
+# Quadro Builder
 
 **Planungstool für QUADRO-Klettergerüste · Planning tool for QUADRO climbing frames**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Vanilla JS](https://img.shields.io/badge/built%20with-Vanilla%20JS-f7df1e?logo=javascript&logoColor=black)](web/js/)
 [![Three.js](https://img.shields.io/badge/Three.js-r160-049ef4?logo=threedotjs&logoColor=white)](web/vendor/three/)
-[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-ready-2ea44f?logo=github)](https://thecodingdad.github.io/quadro-3D/)
+[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-ready-2ea44f?logo=github)](https://k3mpaxl.github.io/Quadro-Builder/)
 
-[**→ App öffnen / Open the app**](https://thecodingdad.github.io/quadro-3D/)
+[**→ App öffnen / Open the app**](https://k3mpaxl.github.io/Quadro-Builder/)
 
 [🇩🇪 Deutsch](#-deutsch) · [🇬🇧 English](#-english)
 
@@ -25,7 +25,7 @@
 
 ### Was ist das?
 
-QUADRO 3D ist eine **offline-fähige Web-App** zum Planen von
+Quadro Builder ist eine **offline-fähige Web-App** zum Planen von
 [QUADRO-Klettergerüsten](https://quadroshop.com) – der Nachbau der alten Windows-Software
 „Quadro 3D", die heute reichlich altmodisch wirkt: umständliche Kamerasteuerung, keine
 Aufbauanleitung. Genau das macht diese App besser.
@@ -35,6 +35,9 @@ Gebaut wird frei im Raum aus Kupplungen, Rohren und Platten. Dabei entstehen neb
 - eine **Stückliste**, die sich mit jedem Handgriff mitzählt – samt Schrauben und Materialpreis
 - ein **Machbarkeitscheck** gegen den eigenen Teile-Bestand
 - ein **Aufbauplan**, Lage für Lage, zum Nachbauen
+
+> Viele Funktionen dieser Version (alle Teile, QDF-Import/-Export, Mobil-Bedienung, Backend) stammen aus dem Fork
+> [thecodingdad/quadro-3D](https://github.com/thecodingdad/quadro-3D) von [@thecodingdad](https://github.com/thecodingdad) – danke!
 
 Keine Installation, kein Konto, keine Cloud: alles läuft im Browser, die Entwürfe bleiben auf
 dem eigenen Rechner.
@@ -89,7 +92,7 @@ dem eigenen Rechner.
 
 ### Schnellstart
 
-Einfach den [Link](https://thecodingdad.github.io/quadro-3D/) aufrufen – fertig. Wer die App
+Einfach den [Link](https://k3mpaxl.github.io/Quadro-Builder/) aufrufen – fertig. Wer die App
 selbst hosten will, legt das Repository auf einen beliebigen statischen Webserver.
 
 Lokal zum Ausprobieren oder Entwickeln:
@@ -108,14 +111,14 @@ QDF-Sammlung auf einen kleinen Server legen. Am einfachsten mit dem fertigen Doc
 Klonen:
 
 ```bash
-docker run -d -p 8000:8000 -v quadro-data:/data ghcr.io/thecodingdad/quadro-3d:1
+docker run -d -p 8000:8000 -v quadro-data:/data ghcr.io/k3mpaxl/quadro-builder:1
 # App: http://localhost:8000/web/index.html
 ```
 
 Dasselbe mit Compose: die [`compose.yml`](compose.yml) neben sich legen und `docker compose up -d`.
 Die Marke `:1` folgt jedem Minor und Patch der 1er-Reihe; wer eine feste Fassung will, nimmt
 `:1.0.0`. Es gibt sie für **amd64 und arm64** (Raspberry Pi, ARM-NAS), auch als
-`thecodingdad/quadro-3d` auf Docker Hub. Bei einem **Bind-Mount** statt eines Volumes einmal
+`k3mpaxl/quadro-builder` auf Docker Hub. Bei einem **Bind-Mount** statt eines Volumes einmal
 `chown 1000:1000` auf das Verzeichnis – der Container läuft nicht als root.
 
 Aus dem Quelltext bauen (Entwicklung):
@@ -168,7 +171,7 @@ dieses Projekt steht in keiner Verbindung zum Hersteller.
 
 ### What is this?
 
-QUADRO 3D is an **offline-capable web app** for planning
+Quadro Builder is an **offline-capable web app** for planning
 [QUADRO climbing frames](https://quadroshop.com) – a rebuild of the old Windows program
 "Quadro 3D", which feels rather dated today: awkward camera, no assembly instructions. That is
 exactly what this app does better.
@@ -178,6 +181,9 @@ You build freely in space from connectors, tubes and panels, and get along the w
 - a **parts list** that counts itself as you build – screws and material price included
 - a **feasibility check** against the parts you own
 - an **assembly plan**, layer by layer, for the actual build
+
+> Many features of this version (all parts, QDF import/export, touch support, backend) come from the fork
+> [thecodingdad/quadro-3D](https://github.com/thecodingdad/quadro-3D) by [@thecodingdad](https://github.com/thecodingdad) – thank you!
 
 No installation, no account, no cloud: everything runs in the browser and your designs stay on
 your own machine.
@@ -231,7 +237,7 @@ your own machine.
 
 ### Quick start
 
-Open the [link](https://thecodingdad.github.io/quadro-3D/) – done. To host it yourself, put the
+Open the [link](https://k3mpaxl.github.io/Quadro-Builder/) – done. To host it yourself, put the
 repository on any static web server.
 
 Locally, to try it out or to develop:
@@ -249,13 +255,13 @@ If you plan on more than one machine, the saved models, your own stock and the Q
 live on a small server. Easiest with the ready-made Docker image – no cloning:
 
 ```bash
-docker run -d -p 8000:8000 -v quadro-data:/data ghcr.io/thecodingdad/quadro-3d:1
+docker run -d -p 8000:8000 -v quadro-data:/data ghcr.io/k3mpaxl/quadro-builder:1
 # app: http://localhost:8000/web/index.html
 ```
 
 The same with Compose: put [`compose.yml`](compose.yml) next to you and run `docker compose up -d`.
 The tag `:1` follows every minor and patch of the 1.x line; pin `:1.0.0` for a fixed version. It
-comes for **amd64 and arm64** (Raspberry Pi, ARM NAS), and also as `thecodingdad/quadro-3d` on
+comes for **amd64 and arm64** (Raspberry Pi, ARM NAS), and also as `k3mpaxl/quadro-builder` on
 Docker Hub. With a **bind mount** instead of a volume, `chown 1000:1000` the directory once – the
 container does not run as root.
 

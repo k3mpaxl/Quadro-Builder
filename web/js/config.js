@@ -1,4 +1,4 @@
-// Globale Konstanten fuer QUADRO 3D.
+// Globale Konstanten fuer Quadro Builder.
 
 // Fassung der App (SemVer). Sie steht an DREI Stellen -- hier, in der Datei
 // `VERSION` und im Cache-Namen von `sw.js` -- und wird ausschliesslich von

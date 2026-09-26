@@ -1,4 +1,4 @@
-# QUADRO 3D with backend.
+# Quadro Builder with backend.
 #
 #   docker compose up -d          app at http://localhost:8000/web/index.html
 #
@@ -13,7 +13,7 @@
 
 services:
   quadro:
-    image: ghcr.io/thecodingdad/quadro-3d:1
+    image: ghcr.io/k3mpaxl/quadro-builder:1
     ports:
       - "8000:8000"
     volumes:

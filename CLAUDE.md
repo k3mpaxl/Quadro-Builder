@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-QUADRO 3D – Planungstool für QUADRO-Klettergerüste. Reine Vanilla-JS-Web-App,
+Quadro Builder – Planungstool für QUADRO-Klettergerüste. Reine Vanilla-JS-Web-App,
 **kein Build-Step, kein npm, keine Frameworks**, läuft offline aus dem Dateisystem eines
 statischen Servers. Nutzerdoku: `README.md`, Historie: die Releases auf GitHub (Notes entstehen
 automatisch aus den Commits – **eine `CHANGELOG.md` gibt es bewusst nicht**).
@@ -80,7 +80,7 @@ git tag v1.1.0 && git push --follow-tags
 
 Der Tag löst `.github/workflows/release.yml` aus: Prüfen (Katalog-JSON, `node --check`, Tag ==
 Version), dann das Docker-Image für **amd64 + arm64** nach **GHCR und Docker Hub**
-(`quadro-3d`, Marken `1.1.0`, `1.1`, `1`, `latest`), dann das **Release mit automatisch
+(`quadro-builder`, Marken `1.1.0`, `1.1`, `1`, `latest`), dann das **Release mit automatisch
 erzeugten Notes**. Eine Vorabfassung (`v1.1.0-rc.1`) bekommt **kein** `latest` und gilt als
 Prerelease.
 

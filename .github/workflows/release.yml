@@ -31,9 +31,9 @@ concurrency:
 
 env:
   # Lower case -- the registries take nothing else, while the repo is called
-  # `quadro-3D`.
-  GHCR_IMAGE: ghcr.io/thecodingdad/quadro-3d
-  DOCKERHUB_IMAGE: docker.io/thecodingdad/quadro-3d
+  # `Quadro-Builder`.
+  GHCR_IMAGE: ghcr.io/k3mpaxl/quadro-builder
+  DOCKERHUB_IMAGE: docker.io/k3mpaxl/quadro-builder
 
 jobs:
   verify:

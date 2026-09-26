@@ -1,4 +1,4 @@
-# Build QUADRO 3D from source -- the way to go while developing.
+# Build Quadro Builder from source -- the way to go while developing.
 #
 #   docker compose -f compose.dev.yml up --build
 #

@@ -1,4 +1,4 @@
-# QUADRO 3D with backend: app and API from one origin.
+# Quadro Builder with backend: app and API from one origin.
 #
 #   docker compose up                            ->  ready-made image from GHCR
 #   docker compose -f compose.dev.yml up --build ->  from this source tree
@@ -15,9 +15,9 @@ FROM python:3.12-slim
 # from the VERSION file -- this label is only for the registry.
 ARG VERSION=dev
 
-LABEL org.opencontainers.image.title="QUADRO 3D" \
+LABEL org.opencontainers.image.title="Quadro Builder" \
       org.opencontainers.image.description="Planning tool for QUADRO climbing frames: build, parts list, QDF import and export." \
-      org.opencontainers.image.source="https://github.com/thecodingdad/quadro-3D" \
+      org.opencontainers.image.source="https://github.com/k3mpaxl/Quadro-Builder" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}"
 

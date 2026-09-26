@@ -853,7 +853,7 @@ Collected list of open points, if anyone wants to dig:
 
 ---
 
-## 7. How QUADRO 3D (this app) reads and writes QDF
+## 7. How Quadro Builder (this app) reads and writes QDF
 
 [`qdfimport.js`](web/js/qdfimport.js) and [`qdfexport.js`](web/js/qdfexport.js)
 are free of three.js and DOM, so they can be run and tested under Node.

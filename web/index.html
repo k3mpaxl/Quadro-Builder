@@ -7,7 +7,7 @@
   <!-- Kein Seiten-Zoom: gezoomt wird im 3D-Bild. Ohne user-scalable=no hat die
        Kneifgeste neben dem Canvas die ganze Oberflaeche vergroessert. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>QUADRO 3D</title>
+  <title>Quadro Builder</title>
   <!-- Installierbare Web-App: Manifest, Symbole und Farbe der Systemleiste.
        Manifest und Service Worker liegen eine Ebene höher, damit ihr
        Geltungsbereich auch `data/` einschließt. -->
@@ -15,7 +15,7 @@
   <meta name="theme-color" content="#1a8cff" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="QUADRO 3D" />
+  <meta name="apple-mobile-web-app-title" content="Quadro Builder" />
   <link rel="icon" href="../icons/icon-192.png" sizes="192x192" type="image/png" />
   <link rel="apple-touch-icon" href="../icons/icon-192.png" />
   <link rel="stylesheet" href="./css/style.css" />
@@ -62,9 +62,9 @@
     <!-- Hauptzeile: Modi + Sonderfunktionen links (scrollt) · Aktionen rechts (fixiert) -->
     <div id="toolbar-main">
       <div id="toolbar-left">
-        <!-- Wird der Platz eng, geht zuerst "3D", dann "QUADRO" -- deshalb steht
+        <!-- Wird der Platz eng, geht zuerst "Builder", dann "QUADRO" -- deshalb steht
              jedes Wort in einem eigenen Feld. Das Zeichen bleibt immer. -->
-        <div class="brand"><img class="brand-icon" src="../icons/icon-192.png" alt="" width="24" height="24"><span class="brand-name">QUADRO</span><span class="brand-3d">3D</span></div>
+        <div class="brand"><img class="brand-icon" src="../icons/icon-192.png" alt="" width="24" height="24"><span class="brand-name">QUADRO</span><span class="brand-3d">Builder</span></div>
         <span class="divider"></span>
         <!-- Datei-Gruppe: ein Knopf, die Einträge klappen wie bei den Bauteilen
              auf. Die vier Knöpfe dahinter bleiben (versteckt) stehen -- an
